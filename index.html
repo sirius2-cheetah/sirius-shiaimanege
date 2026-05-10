@@ -278,7 +278,7 @@
     const { createApp, ref, nextTick, onMounted } = Vue;
 
     // ==========================================
-    // ⚠️ ここにGASでデプロイした「ウェブアプリのURL」を貼り付けてください
+    // いただいたGASのAPI URLを組み込みました！
     // ==========================================
     const GAS_API_URL = "https://script.google.com/macros/s/AKfycbx64STA97vVlTH4cVQoC6mu6VN0sCpTjDQkP28oUiq9gFqhiXK0-Hv3OxrCe_a3-DBT8g/exec";
 
@@ -329,10 +329,6 @@
         const scoreInput2 = ref(0);
 
         onMounted(() => { 
-          if(GAS_API_URL.includes("https://script.google.com/macros/s/AKfycbx64STA97vVlTH4cVQoC6mu6VN0sCpTjDQkP28oUiq9gFqhiXK0-Hv3OxrCe_a3-DBT8g/exec")){
-            alert("エラー: ソースコード内の GAS_API_URL が設定されていません。GASのURLを貼り付けてください。");
-            return;
-          }
           fetchAllData(); 
         });
 
