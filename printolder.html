@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>RCJ 大会マネージャー (HS / HW)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  
+  <style>
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; background-color: white !important; margin: 0; padding: 0;}
+      .print-hidden { display: none !important; }
+      .print-only { display: block !important; }
+      .qr-page { page-break-after: always; padding: 10mm; }
+    }
+    .print-only { display: none; }
+    .api-loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.85); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; color: #334155; }
+    .spinner { border: 4px solid #cbd5e1; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 1rem; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased min-h-screen flex flex-col">
+
+  <div id="app" class="flex flex-col min-h-screen">
+    
+    <div v-if="globalLoading" class="api-loading">
+      <div class="spinner"></div>
+      <div>通信中...</div>
+    </div>
+
+    <div v-if="isRefereeMode" class="flex-grow p-4 bg-slate-100 flex flex-col max-w-md mx-auto w-full">
+      <header class="bg-indigo-900 text-white shadow-md p-4 rounded-xl text-center mb-6">
+        <h1 class="font-extrabold tracking-wider">チーム ステータス確認 (HW)</h1>
+      </header>
+
+      <div v-if="refereeTeamData" class="bg-white p-6 rounded-2xl shadow-md border border-slate-200">
+        <div class="text-center mb-6 border-b pb-4">
+          <div class="text-sm text-slate-500 font-bold mb-1">ID: {{ refereeTeamData.id }}</div>
+          <div class="text-3xl font-black text-slate-800">{{ refereeTeamData.name }}</div>
+        </div>
+
+        <div class="mb-6">
+          <h2 class="font-bold text-slate-600 mb-2">🔍 車検状況</h2>
+          <div v-if="isInspectionComplete" class="bg-green-100 text-green-700 font-black p-4 rounded-xl text-center text-xl flex items-center justify-center">
+            <span class="mr-2">✅</span> 車検完了 (A・B両方クリア)
+          </div>
+          <div v-else class="bg-red-100 text-red-700 font-black p-4 rounded-xl text-center text-xl flex items-center justify-center">
+            <span class="mr-2">❌</span> 車検 未完了
+          </div>
+          <p v-if="!isInspectionComplete" class="text-xs text-red-500 font-bold text-center mt-2">※5項目すべてにチェックが入るまで完了になりません</p>
+        </div>
+
+        <div>
+          <h2 class="font-bold text-slate-600 mb-2">🗓️ 次の試合 (未実施)</h2>
+          <div v-if="nextMatch" class="bg-blue-50 border border-blue-200 p-4 rounded-xl">
+            <div class="text-xs bg-blue-800 text-white inline-block px-2 py-1 rounded font-bold mb-2">対戦番号: {{ nextMatch.id }}</div>
+            <div class="flex justify-between items-center text-center">
+              <div class="flex-1 font-extrabold text-lg" :class="nextMatch.team1 === refereeTeamData.id ? 'text-indigo-600' : 'text-slate-700'">{{ nextMatch.team1Name }}</div>
+              <div class="px-2 font-black text-slate-400">VS</div>
+              <div class="flex-1 font-extrabold text-lg" :class="nextMatch.team2 === refereeTeamData.id ? 'text-indigo-600' : 'text-slate-700'">{{ nextMatch.team2Name }}</div>
+            </div>
+          </div>
+          <div v-else class="bg-slate-100 p-4 rounded-xl text-center text-slate-500 font-bold">
+            予定されている未実施の試合はありません
+          </div>
+        </div>
+        
+        <button @click="fetchAllData" class="mt-8 w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl shadow">
+          🔄 情報を更新
+        </button>
+      </div>
+      
+      <div v-else class="text-center py-10 font-bold text-slate-500">
+        データが見つかりません。
+      </div>
+    </div>
+
+    <template v-else>
+
+      <div class="print-only">
+        <div v-for="team in generatedTeams" :key="team.id" class="qr-page bg-white border border-slate-300 rounded-lg p-6 mb-4 max-w-2xl mx-auto">
+          <div class="text-center mb-6 border-b pb-2">
+            <h1 class="text-3xl font-black text-slate-800">{{ team.name }}</h1>
+            <p class="text-sm font-bold text-slate-500">TEAM ID: {{ team.id }}</p>
+          </div>
+          
+          <div class="flex flex-wrap justify-center gap-8">
+            <div class="flex flex-col items-center">
+              <div class="font-black text-blue-600 bg-blue-100 px-4 py-1 rounded-full mb-3 text-lg">A号車 車検用</div>
+              <div :id="'qr-a-' + team.id"></div>
+            </div>
+            <div class="flex flex-col items-center">
+              <div class="font-black text-red-600 bg-red-100 px-4 py-1 rounded-full mb-3 text-lg">B号車 車検用</div>
+              <div :id="'qr-b-' + team.id"></div>
+            </div>
+            <div class="flex flex-col items-center border-l-2 border-slate-200 pl-8">
+              <div class="font-black text-indigo-700 bg-indigo-100 px-4 py-1 rounded-full mb-3 text-lg">📱 審判・ステータス確認</div>
+              <div :id="'qr-status-' + team.id"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="print-hidden flex-grow flex flex-col">
+        <header class="bg-gradient-to-r from-blue-800 to-indigo-900 text-white shadow-md p-4 sticky top-0 z-10 flex justify-between items-center">
+          <h1 class="text-xl font-extrabold tracking-wider">RCJ マネージャー (HS)</h1>
+        </header>
+
+        <main class="flex-grow p-4 overflow-y-auto pb-24">
+          
+          <div v-if="currentTab === 'qr'" class="max-w-xl mx-auto space-y-6">
+            
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <h2 class="text-xl font-bold border-b pb-2 mb-4 flex items-center"><span class="mr-2">🖨️</span>受付・QRコード発行</h2>
+              <p class="text-sm text-slate-600 mb-4 font-bold">チームが受付に来るたびに1チームずつ追加・発行します。</p>
+              
+              <button @click="addSingleTeam" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-4 rounded-xl transition shadow-md text-lg">
+                ＋ 1チーム追加してQRを発行
+              </button>
+            </div>
+
+            <div v-if="generatedTeams.length > 0" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <h3 class="font-bold text-slate-700 mb-4">🖨️ 印刷メニュー</h3>
+              <div class="flex space-x-4">
+                <button @click="printQRs" class="flex-1 bg-slate-800 hover:bg-slate-900 text-white px-4 py-3 rounded-xl font-bold shadow transition">
+                  表示中のQRを印刷
+                </button>
+                <button @click="showAllQRs" class="flex-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-4 py-3 rounded-xl font-bold shadow-sm transition">
+                  全チームを一括表示
+                </button>
+              </div>
+            </div>
+
+            <div class="bg-red-50 p-6 rounded-2xl border border-red-200 mt-8">
+              <h2 class="text-lg font-bold text-red-700 mb-2 flex items-center"><span class="mr-2">⚠️</span>危険ゾーン</h2>
+              <p class="text-xs text-red-600 mb-4 font-bold">これまでのチーム、車検、試合データがすべて完全に消去されます。</p>
+              <button @click="clearTournament" class="w-full border-2 border-red-500 text-red-600 hover:bg-red-500 hover:text-white font-bold py-3 px-4 rounded-xl transition">
+                大会データを初期化する
+              </button>
+            </div>
+          </div>
+
+          <div v-if="currentTab === 'inspection'" class="max-w-md mx-auto space-y-4">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <h2 class="text-xl font-bold border-b pb-2 mb-4 flex items-center justify-center"><span class="mr-2">🔍</span>車検 ＆ チーム登録</h2>
+              
+              <div v-show="!scannedTeamData && !isScanning" class="py-6">
+                <button @click="startScanner" class="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-4 px-4 rounded-xl transition shadow-md text-lg">
+                  📷 Webカメラを起動する
+                </button>
+                <div class="mt-6 text-center border-t border-slate-200 pt-6">
+                  <p class="text-sm font-bold text-slate-500 mb-2">画像から読み込む場合</p>
+                  <label class="flex items-center justify-center w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-4 px-4 rounded-xl cursor-pointer transition shadow-md">
+                    <span class="mr-2">📁</span> 画像からQRを読み込む
+                    <input type="file" accept="image/*" class="hidden" @change="handleFileUpload">
+                  </label>
+                </div>
+              </div>
+
+              <div v-show="isScanning" class="relative">
+                <div id="reader-inspection" class="border-2 border-dashed border-teal-300 rounded-lg overflow-hidden"></div>
+                <button @click="stopScanner" class="mt-4 bg-slate-500 text-white px-6 py-2 rounded-lg font-bold shadow w-full">キャンセル</button>
+              </div>
+
+              <div v-if="scannedTeamData" class="text-left mt-4">
+                <div class="bg-teal-50 p-4 rounded-xl border border-teal-200 mb-6 shadow-sm">
+                  <div class="flex justify-between items-center mb-3 border-b border-teal-200 pb-2">
+                    <div class="text-xs text-teal-600 font-bold">チームID: {{ scannedTeamData.id }}</div>
+                    <div class="font-bold px-3 py-1 rounded-full text-white text-xs shadow-sm" :class="scannedCarType === 'A' ? 'bg-blue-500' : 'bg-red-500'">
+                      {{ scannedCarType }}号車
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-sm font-bold text-teal-800 mb-1">📝 チーム名</label>
+                    <div class="flex shadow-sm">
+                      <input type="text" v-model="scannedTeamData.name" placeholder="チーム名" class="border border-teal-300 rounded-l-lg p-3 w-full focus:ring-2 focus:ring-teal-500 outline-none text-slate-800 font-bold bg-white">
+                      <button @click="updateTeamName" class="bg-teal-600 hover:bg-teal-700 text-white font-bold px-5 rounded-r-lg transition">保存</button>
+                    </div>
+                  </div>
+                </div>
+
+                <h3 class="font-bold text-slate-700 mb-3 border-l-4 border-slate-400 pl-2">公式規定チェックリスト</h3>
+                <div class="space-y-3">
+                  <label v-for="item in inspectionItems" :key="item.key" class="flex items-start p-3 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100 transition">
+                    <input type="checkbox" :checked="getInspectionStatus(item.key)" @change="toggleInspection(item.key, $event.target.checked)" class="w-6 h-6 mt-1 text-teal-600 bg-white border-slate-300 rounded focus:ring-teal-500">
+                    <div class="ml-3">
+                      <span class="block font-bold text-slate-700">{{ item.title }}</span>
+                      <span class="block text-xs text-slate-500 mt-1">{{ item.desc }}</span>
+                    </div>
+                  </label>
+                </div>
+
+                <button @click="resetScan" class="mt-8 w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 px-4 rounded-xl transition shadow">
+                  別の車両をスキャン
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="currentTab === 'schedule'" class="max-w-xl mx-auto space-y-4">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <div class="flex justify-between items-center border-b pb-2 mb-4">
+                <h2 class="text-xl font-bold flex items-center"><span class="mr-2">🗓️</span>総当たり対戦表</h2>
+                <button @click="fetchMatchesFromServer" class="text-blue-600 font-bold bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-lg transition shadow-sm">🔄 同期</button>
+              </div>
+
+              <button @click="generateSchedule" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl mb-6 shadow">
+                総当たり戦を自動生成する
+              </button>
+
+              <div v-if="matchesList.length === 0" class="text-center py-8 text-slate-500 font-bold">まだ対戦表がありません</div>
+
+              <div class="space-y-4">
+                <div v-for="m in matchesList" :key="m.id" class="border border-slate-200 p-4 rounded-xl relative shadow-sm transition" :class="m.isPlayed ? 'bg-slate-50' : 'bg-white'">
+                  <div class="flex justify-between items-center mb-3 border-b border-slate-100 pb-2">
+                    <span class="bg-slate-800 text-white text-xs font-bold px-3 py-1 rounded-full shadow-sm">対戦番号 {{ m.id }}</span>
+                    <span v-if="m.isPlayed" class="text-green-600 font-bold text-sm bg-green-50 px-2 py-1 rounded">✅ 実施済</span>
+                    <span v-else class="text-orange-500 font-bold text-sm bg-orange-50 px-2 py-1 rounded">⏳ 未実施</span>
+                  </div>
+                  
+                  <div class="flex justify-between items-center text-center px-2">
+                    <div class="flex-1 w-0">
+                      <div class="font-extrabold text-slate-800 text-lg truncate" :title="m.team1Name">{{ m.team1Name }}</div>
+                    </div>
+                    <div class="px-4 text-slate-400 font-black text-xl italic">VS</div>
+                    <div class="flex-1 w-0">
+                      <div class="font-extrabold text-slate-800 text-lg truncate" :title="m.team2Name">{{ m.team2Name }}</div>
+                    </div>
+                  </div>
+
+                  <div v-if="m.isPlayed" class="text-center mt-4 text-3xl font-black text-slate-800 bg-white border border-slate-200 rounded-lg py-2 mx-8 shadow-sm">
+                    {{ m.score1 }} - {{ m.score2 }}
+                  </div>
+                  <button v-else @click="goToScore(m.id)" class="w-full mt-4 bg-orange-100 hover:bg-orange-200 text-orange-700 font-bold py-3 rounded-xl transition shadow-sm border border-orange-200">
+                    結果を記録する ⚽
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="currentTab === 'score'" class="max-w-md mx-auto space-y-4">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <h2 class="text-xl font-bold border-b pb-2 mb-4 flex items-center justify-center"><span class="mr-2">⚽</span>試合結果の入力</h2>
+              
+              <div class="flex mb-6 shadow-sm rounded-lg">
+                <input type="number" v-model.number="targetMatchId" placeholder="対戦番号 (例: 1)" class="border border-slate-300 p-3 rounded-l-lg w-full font-bold focus:ring-2 focus:ring-orange-500 outline-none bg-slate-50 text-lg text-center">
+                <button @click="loadMatchForScoring" class="bg-orange-500 hover:bg-orange-600 text-white px-6 rounded-r-lg font-bold transition">検索</button>
+              </div>
+
+              <div v-if="targetMatchData" class="mt-4 border-t border-slate-200 pt-6">
+                <div class="text-center mb-6">
+                  <span class="bg-slate-800 text-white font-bold px-5 py-2 rounded-full text-lg shadow-sm">対戦番号 {{ targetMatchData.id }}</span>
+                </div>
+
+                <div class="flex justify-between items-center gap-4 bg-orange-50 p-6 rounded-2xl border border-orange-200 shadow-inner">
+                  <div class="flex-1 text-center w-0">
+                    <div class="font-extrabold text-xl mb-1 text-slate-800 truncate" :title="targetMatchData.team1Name">{{ targetMatchData.team1Name }}</div>
+                    <input type="number" v-model.number="scoreInput1" min="0" class="w-full text-center text-5xl font-black py-4 border-2 border-orange-300 rounded-xl focus:ring-4 focus:ring-orange-400 bg-white shadow-sm outline-none transition">
+                  </div>
+                  <div class="font-black text-4xl text-slate-400">-</div>
+                  <div class="flex-1 text-center w-0">
+                    <div class="font-extrabold text-xl mb-1 text-slate-800 truncate" :title="targetMatchData.team2Name">{{ targetMatchData.team2Name }}</div>
+                    <input type="number" v-model.number="scoreInput2" min="0" class="w-full text-center text-5xl font-black py-4 border-2 border-orange-300 rounded-xl focus:ring-4 focus:ring-orange-400 bg-white shadow-sm outline-none transition">
+                  </div>
+                </div>
+                
+                <button @click="saveMatchScore" class="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 mt-6 rounded-xl shadow-lg transition text-lg">
+                  結果を登録してシートを更新
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="currentTab === 'ranking'" class="max-w-lg mx-auto space-y-4">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <div class="flex justify-between items-center border-b pb-2 mb-4">
+                <h2 class="text-xl font-bold flex items-center"><span class="mr-2">🏆</span>トーナメント順位表</h2>
+                <button @click="fetchRankingFromServer" class="text-purple-600 hover:text-purple-800 font-bold bg-purple-50 hover:bg-purple-100 px-3 py-1 rounded-lg transition shadow-sm">🔄 同期</button>
+              </div>
+              
+              <div v-if="rankingList.length === 0" class="text-center py-8 text-slate-500 font-bold">データがありません</div>
+              <div v-else class="space-y-3">
+                <div v-for="(team, index) in rankingList" :key="team.id" 
+                     class="flex items-center justify-between p-4 rounded-xl border relative overflow-hidden transition hover:shadow-md"
+                     :class="index === 0 ? 'bg-yellow-50 border-yellow-300' : (index === 1 ? 'bg-slate-50 border-slate-300' : (index === 2 ? 'bg-orange-50 border-orange-300' : 'bg-white border-slate-200'))">
+                  
+                  <div class="flex items-center z-10 w-[60%]">
+                    <div class="min-w-[2.5rem] w-10 h-10 rounded-full flex items-center justify-center font-black text-white mr-3 shadow-sm text-lg shrink-0"
+                         :class="index === 0 ? 'bg-yellow-400' : (index === 1 ? 'bg-slate-400' : (index === 2 ? 'bg-orange-400' : 'bg-slate-300 text-slate-600'))">
+                      {{ index + 1 }}
+                    </div>
+                    <div class="w-full min-w-0 pr-2">
+                      <div class="font-extrabold text-slate-800 text-lg truncate" :title="team.name">{{ team.name }}</div>
+                    </div>
+                  </div>
+                  
+                  <div class="text-right z-10 w-[40%] shrink-0">
+                    <div class="font-black text-2xl" :class="index === 0 ? 'text-yellow-600' : 'text-slate-800'">
+                      {{ team.matchPoints || 0 }} <span class="text-sm font-normal text-slate-500">勝点</span>
+                    </div>
+                    <div class="text-[11px] text-slate-500 font-bold mt-1">
+                      得失差: <span :class="(team.goalDifference||0) > 0 ? 'text-green-600' : ((team.goalDifference||0) < 0 ? 'text-red-600' : '')">{{ team.goalDifference > 0 ? '+' : ''}}{{ team.goalDifference || 0 }}</span> 
+                      <span class="mx-1 text-slate-300">|</span> 得点: {{ team.goalsScored || 0 }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </main>
+
+        <nav class="bg-white border-t border-slate-200 fixed bottom-0 w-full pb-safe z-50">
+          <div class="flex justify-around items-center max-w-md mx-auto h-16">
+            <button @click="currentTab = 'qr'" class="flex flex-col items-center w-1/5 transition" :class="currentTab === 'qr' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'">
+              <span class="text-xl mb-1">⚙️</span><span class="text-[10px] font-bold">設定</span>
+            </button>
+            <button @click="currentTab = 'inspection'" class="flex flex-col items-center w-1/5 transition" :class="currentTab === 'inspection' ? 'text-teal-600' : 'text-slate-400 hover:text-slate-600'">
+              <span class="text-xl mb-1">🔍</span><span class="text-[10px] font-bold">車検</span>
+            </button>
+            <button @click="currentTab = 'schedule'" class="flex flex-col items-center w-1/5 transition" :class="currentTab === 'schedule' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'">
+              <span class="text-xl mb-1">🗓️</span><span class="text-[10px] font-bold">対戦表</span>
+            </button>
+            <button @click="currentTab = 'score'" class="flex flex-col items-center w-1/5 transition" :class="currentTab === 'score' ? 'text-orange-600' : 'text-slate-400 hover:text-slate-600'">
+              <span class="text-xl mb-1">⚽</span><span class="text-[10px] font-bold">記録</span>
+            </button>
+            <button @click="currentTab = 'ranking'" class="flex flex-col items-center w-1/5 transition" :class="currentTab === 'ranking' ? 'text-purple-600' : 'text-slate-400 hover:text-slate-600'">
+              <span class="text-xl mb-1">🏆</span><span class="text-[10px] font-bold">順位</span>
+            </button>
+          </div>
+        </nav>
+      </div>
+
+    </template>
+  </div>
+
+  <script type="module">
+    const { createApp, ref, computed, nextTick, onMounted } = Vue;
+
+    // ==========================================
+    // ⚠️ GASのAPI URL
+    // ==========================================
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbx64STA97vVlTH4cVQoC6mu6VN0sCpTjDQkP28oUiq9gFqhiXK0-Hv3OxrCe_a3-DBT8g/exec";
+
+    const fetchGAS = async (action, data = {}) => {
+      try {
+        const response = await fetch(GAS_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify({ action, data })
+        });
+        const result = await response.json();
+        if (result.status === 'error') throw new Error(result.message);
+        return result.data;
+      } catch (error) {
+        console.error("API Error:", error);
+        throw error;
+      }
+    };
+
+    createApp({
+      setup() {
+        const currentTab = ref('schedule');
+        const globalLoading = ref(false);
+
+        // 🌟 モード判定用
+        const isRefereeMode = ref(false);
+        const refereeTeamId = ref('');
+
+        const teamsData = ref([]);
+        const matchesList = ref([]);
+        const rankingList = ref([]);
+        
+        const generatedTeams = ref([]);
+
+        const isScanning = ref(false);
+        let html5QrCode = null;
+        const scannedTeamData = ref(null);
+        const scannedCarType = ref('');
+        const inspectionItems = [
+          { key: 'size', title: 'サイズ・重量規定', desc: '規定内に収まっているか' },
+          { key: 'voltage', title: '電圧・バッテリー', desc: '規定電圧以下。端子がカバーされているか' },
+          { key: 'kicker', title: 'キッカーパワー', desc: '球が跳ね返ってゴール裏壁に当たらないか' },
+          { key: 'capture', title: 'ボール捕捉制限', desc: '規定の深さ以上ボールを抱え込んでいないか' },
+          { key: 'safety', title: '安全・カラー規定', desc: '鋭利な部品なし。黄・青色が隠されているか' }
+        ];
+
+        const targetMatchId = ref('');
+        const targetMatchData = ref(null);
+        const scoreInput1 = ref(0);
+        const scoreInput2 = ref(0);
+
+        onMounted(() => { 
+          const urlParams = new URLSearchParams(window.location.search);
+          const teamParam = urlParams.get('team');
+          if (teamParam) {
+            isRefereeMode.value = true;
+            refereeTeamId.value = teamParam;
+          }
+          
+          if(GAS_API_URL.includes("ここにURLを貼り付け")){
+            alert("エラー: ソースコード内の GAS_API_URL が設定されていません。");
+            return;
+          }
+          fetchAllData(); 
+        });
+
+        const fetchAllData = async () => {
+          globalLoading.value = true;
+          try {
+            const data = await fetchGAS('getAllData');
+            const t = data.teams;
+            const m = data.matches;
+            
+            teamsData.value = t;
+            const teamsMap = {};
+            t.forEach(team => { teamsMap[team.id] = team.name; });
+            
+            m.forEach(match => {
+              match.team1Name = teamsMap[match.team1] || match.team1;
+              match.team2Name = teamsMap[match.team2] || match.team2;
+            });
+            matchesList.value = m;
+            updateRankingLocal();
+          } catch (e) { 
+            console.error(e);
+            alert("データの取得に失敗しました。");
+          } finally {
+            globalLoading.value = false;
+          }
+        };
+
+        // ==========================================
+        // 【修正済】審判用ステータス算出ロジック (厳格チェック)
+        // ==========================================
+        const refereeTeamData = computed(() => {
+          return teamsData.value.find(t => String(t.id) === String(refereeTeamId.value));
+        });
+
+        const isInspectionComplete = computed(() => {
+          if (!refereeTeamData.value) return false;
+          
+          // 必須の5項目を明示的に指定してチェック
+          const requiredKeys = ['size', 'voltage', 'kicker', 'capture', 'safety'];
+          
+          // A号車のチェック
+          const aOk = requiredKeys.every(k => 
+            refereeTeamData.value.inspectionA && 
+            refereeTeamData.value.inspectionA[k] === true
+          );
+          
+          // B号車のチェック
+          const bOk = requiredKeys.every(k => 
+            refereeTeamData.value.inspectionB && 
+            refereeTeamData.value.inspectionB[k] === true
+          );
+          
+          return aOk && bOk;
+        });
+
+        const nextMatch = computed(() => {
+          const matches = matchesList.value.filter(m => (String(m.team1) === String(refereeTeamId.value) || String(m.team2) === String(refereeTeamId.value)) && !m.isPlayed);
+          matches.sort((a, b) => a.id - b.id);
+          return matches.length > 0 ? matches[0] : null;
+        });
+
+        // ==========================================
+        // QR生成ロジック群
+        // ==========================================
+        const renderQRs = (teamsToRender) => {
+          nextTick(() => {
+            const baseUrl = window.location.origin + window.location.pathname;
+            
+            teamsToRender.forEach(team => {
+              document.getElementById('qr-a-' + team.id).innerHTML = "";
+              new QRCode(document.getElementById('qr-a-' + team.id), { text: team.qrA, width: 120, height: 120 });
+              
+              document.getElementById('qr-b-' + team.id).innerHTML = "";
+              new QRCode(document.getElementById('qr-b-' + team.id), { text: team.qrB, width: 120, height: 120 });
+              
+              const statusUrl = baseUrl + '?team=' + team.id;
+              document.getElementById('qr-status-' + team.id).innerHTML = "";
+              new QRCode(document.getElementById('qr-status-' + team.id), { text: statusUrl, width: 120, height: 120 });
+            });
+          });
+        };
+
+        const addSingleTeam = async () => {
+          globalLoading.value = true;
+          try {
+            const newTeam = await fetchGAS('addTeamData');
+            teamsData.value.push(newTeam);
+            generatedTeams.value = [newTeam];
+            renderQRs(generatedTeams.value);
+            alert('受付が完了しました！下にQRコードが表示されます。');
+          } catch (e) {
+             console.error(e); alert('チームの追加に失敗しました');
+          } finally {
+             globalLoading.value = false;
+          }
+        };
+
+        const showAllQRs = () => {
+          generatedTeams.value = [...teamsData.value];
+          renderQRs(generatedTeams.value);
+        };
+
+        const printQRs = () => window.print();
+
+        const clearTournament = async () => {
+          if (!confirm("⚠️ 本当に全てのチームと試合データを消去しますか？")) return;
+          if (!confirm("⚠️ 復元できません。本当によろしいですか？")) return;
+          
+          globalLoading.value = true;
+          try {
+            await fetchGAS('clearAllData');
+            teamsData.value = [];
+            matchesList.value = [];
+            rankingList.value = [];
+            generatedTeams.value = [];
+            alert("大会データを初期化しました。");
+          } catch (e) {
+             console.error(e); alert('初期化に失敗しました');
+          } finally {
+             globalLoading.value = false;
+          }
+        };
+
+        const updateTeamName = async () => {
+          if (!scannedTeamData.value || !scannedTeamData.value.name.trim()) return;
+          globalLoading.value = true;
+          try {
+            await fetchGAS('updateTeamNameData', { id: scannedTeamData.value.id, newName: scannedTeamData.value.name.trim() });
+            alert('✅ 保存しました！');
+            await fetchAllData();
+          } catch (e) { console.error(e); alert('エラー'); }
+          finally { globalLoading.value = false; }
+        };
+
+        const toggleInspection = async (key, checked) => {
+          if (!scannedTeamData.value) return;
+          globalLoading.value = true;
+          try {
+            await fetchGAS('updateInspectionData', { id: scannedTeamData.value.id, carType: scannedCarType.value, key, value: checked });
+            scannedTeamData.value[`inspection${scannedCarType.value}`][key] = checked;
+          } catch (e) { console.error(e); alert('エラー'); }
+          finally { globalLoading.value = false; }
+        };
+
+        const fetchMatchesFromServer = async () => {
+          await fetchAllData();
+        };
+
+        const generateSchedule = async () => {
+          if (!confirm('現在の対戦結果がリセットされます。生成しますか？')) return;
+          globalLoading.value = true;
+          try {
+            if (teamsData.value.length < 2) await fetchAllData();
+            await fetchGAS('generateScheduleData', { teams: teamsData.value });
+            await fetchAllData();
+            alert('対戦表を生成しました！');
+          } catch (e) { console.error(e); alert('エラー'); }
+          finally { globalLoading.value = false; }
+        };
+
+        const goToScore = (id) => {
+          targetMatchId.value = id;
+          currentTab.value = 'score';
+          loadMatchForScoring();
+        };
+
+        const loadMatchForScoring = () => {
+          const match = matchesList.value.find(m => Number(m.id) === Number(targetMatchId.value));
+          if (match) {
+            targetMatchData.value = match;
+            scoreInput1.value = match.score1 || 0;
+            scoreInput2.value = match.score2 || 0;
+          } else { alert('対戦が見つかりません。同期ボタンを押して最新データを取得してください。'); }
+        };
+
+        const saveMatchScore = async () => {
+          if (!targetMatchData.value) return;
+          globalLoading.value = true;
+          try {
+            await fetchGAS('saveMatchScoreData', { matchId: targetMatchData.value.id, score1: parseInt(scoreInput1.value), score2: parseInt(scoreInput2.value) });
+            alert('✅ スプレッドシートに結果を保存しました！');
+            await fetchAllData();
+            targetMatchId.value = '';
+            targetMatchData.value = null;
+            currentTab.value = 'schedule';
+          } catch (e) { console.error(e); alert('エラーが発生しました。'); }
+          finally { globalLoading.value = false; }
+        };
+
+        const fetchRankingFromServer = async () => {
+          await fetchAllData();
+        };
+
+        const updateRankingLocal = () => {
+          let list = [...teamsData.value];
+          let allMatches = matchesList.value;
+          list.sort((a, b) => {
+            if (b.matchPoints !== a.matchPoints) return b.matchPoints - a.matchPoints;
+            if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
+            if (b.goalsScored !== a.goalsScored) return b.goalsScored - a.goalsScored;
+            const h2h = allMatches.find(m => m.isPlayed && ((m.team1 === a.id && m.team2 === b.id) || (m.team1 === b.id && m.team2 === a.id)));
+            if (h2h) {
+               let aScore = h2h.team1 === a.id ? h2h.score1 : h2h.score2;
+               let bScore = h2h.team1 === b.id ? h2h.score1 : h2h.score2;
+               if (aScore !== bScore) return bScore - aScore;
+            }
+            return 0;
+          });
+          rankingList.value = list;
+        };
+
+        const processQrText = (text) => {
+          if (text.length !== 8) return alert('無効なQRコードです');
+          const id = text.substring(0, 7), suffix = text.substring(7, 8).toLowerCase();
+          if (suffix !== 'a' && suffix !== 'b') return alert('無効な末尾形式です');
+          
+          const team = teamsData.value.find(t => String(t.id) === String(id));
+          if (team) {
+            scannedTeamData.value = team;
+            scannedCarType.value = suffix.toUpperCase();
+          } else {
+            alert('データが見つかりません。同期して最新データを取得してください。');
+          }
+        };
+
+        const startScanner = () => {
+          isScanning.value = true;
+          scannedTeamData.value = null;
+          nextTick(() => {
+            if (html5QrCode) html5QrCode.clear();
+            html5QrCode = new Html5Qrcode("reader-inspection");
+            
+            html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, async (text) => {
+              await stopScanner();
+              processQrText(text);
+            }, () => {}).catch(err => { 
+                html5QrCode.start({ facingMode: "user" }, { fps: 10, qrbox: { width: 250, height: 250 } }, async (text) => {
+                  await stopScanner();
+                  processQrText(text);
+                }, () => {}).catch(err2 => {
+                  isScanning.value = false; 
+                  alert('カメラを起動できませんでした。画像読み込みをご利用ください。\n詳細: ' + err2); 
+                });
+            });
+          });
+        };
+
+        const stopScanner = async () => { if (html5QrCode) { try { await html5QrCode.stop(); html5QrCode.clear(); } catch (e) {} } isScanning.value = false; };
+        const resetScan = () => { scannedTeamData.value = null; };
+        const getInspectionStatus = (key) => { return scannedTeamData.value ? scannedTeamData.value[`inspection${scannedCarType.value}`][key] : false; };
+
+        const handleFileUpload = async (event) => {
+          const file = event.target.files[0];
+          if (!file) return;
+
+          globalLoading.value = true;
+          try {
+            if (!html5QrCode) html5QrCode = new Html5Qrcode("reader-inspection");
+            const text = await html5QrCode.scanFile(file, true);
+            processQrText(text);
+          } catch (err) {
+            console.error(err);
+            alert('QRコードを読み取れませんでした。はっきりと写っている画像を選んでください。');
+          } finally {
+            globalLoading.value = false;
+            event.target.value = '';
+          }
+        };
+
+        return {
+          currentTab, globalLoading,
+          isRefereeMode, refereeTeamId, refereeTeamData, isInspectionComplete, nextMatch, fetchAllData,
+          generatedTeams, addSingleTeam, showAllQRs, printQRs, clearTournament,
+          isScanning, startScanner, stopScanner, resetScan, handleFileUpload,
+          scannedTeamData, scannedCarType, inspectionItems, getInspectionStatus, toggleInspection, updateTeamName,
+          matchesList, fetchMatchesFromServer, generateSchedule, goToScore,
+          targetMatchId, targetMatchData, scoreInput1, scoreInput2, loadMatchForScoring, saveMatchScore,
+          rankingList, fetchRankingFromServer
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
