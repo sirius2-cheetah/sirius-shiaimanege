@@ -9,13 +9,94 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   
   <style>
+    /* ==========================================
+       🖨️ 58mm サーマルプリンター専用 印刷CSS
+       ========================================== */
     @media print {
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; background-color: white !important; margin: 0; padding: 0;}
+      body { 
+        width: 58mm; /* レシート幅に強制固定 */
+        margin: 0; 
+        padding: 0; 
+        background-color: white !important; 
+        color: black !important;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        -webkit-print-color-adjust: exact; 
+        print-color-adjust: exact; 
+      }
       .print-hidden { display: none !important; }
-      .print-only { display: block !important; }
-      .qr-page { page-break-after: always; padding: 10mm; }
+      .print-only { display: block !important; width: 58mm; margin: 0; padding: 0; }
+      
+      /* 1チーム分の全体コンテナ（最後に改ページしてカットさせる） */
+      .receipt-ticket { 
+        width: 58mm; 
+        page-break-after: always; 
+        margin: 0; 
+        padding: 0;
+      }
+      
+      /* 各QRごとのブロック */
+      .receipt-section { 
+        text-align: center; 
+        padding-top: 5mm; 
+      }
+      .last-section { 
+        padding-bottom: 5mm; 
+      }
+
+      /* レシート内の文字デザイン */
+      .receipt-header { 
+        font-size: 10px; 
+        font-weight: bold; 
+        border-bottom: 1px solid #000; 
+        margin-bottom: 4px; 
+        display: inline-block; 
+      }
+      .receipt-team-name { 
+        font-size: 18px; 
+        font-weight: 900; 
+        line-height: 1.2; 
+        margin: 2px 0; 
+      }
+      .receipt-id { 
+        font-size: 12px; 
+        font-weight: bold; 
+        margin-bottom: 4px; 
+      }
+      .receipt-label { 
+        font-size: 13px; 
+        font-weight: 900; 
+        border: 2px solid #000; 
+        border-radius: 4px; 
+        padding: 2px 8px; 
+        display: inline-block; 
+        margin-bottom: 4px; 
+      }
+
+      /* QRコードのセンタリング */
+      .qr-box { 
+        display: flex; 
+        justify-content: center; 
+        margin: 4px 0; 
+      }
+
+      /* 切り取り線 */
+      .cut-line { 
+        font-size: 14px; 
+        font-family: monospace; 
+        color: #000; 
+        margin: 8px 0; 
+        overflow: hidden; 
+        white-space: nowrap; 
+        letter-spacing: -1px;
+      }
+
+      /* 余白を完全に消す */
+      @page { margin: 0; size: 58mm auto; }
     }
+    
     .print-only { display: none; }
+    
+    /* UI用のローディング */
     .api-loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.85); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; color: #334155; }
     .spinner { border: 4px solid #cbd5e1; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 1rem; }
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -80,26 +161,34 @@
     <template v-else>
 
       <div class="print-only">
-        <div v-for="team in generatedTeams" :key="team.id" class="qr-page bg-white border border-slate-300 rounded-lg p-6 mb-4 max-w-2xl mx-auto">
-          <div class="text-center mb-6 border-b pb-2">
-            <h1 class="text-3xl font-black text-slate-800">{{ team.name }}</h1>
-            <p class="text-sm font-bold text-slate-500">TEAM ID: {{ team.id }}</p>
+        <div v-for="team in generatedTeams" :key="team.id" class="receipt-ticket">
+          
+          <div class="receipt-section">
+            <div class="receipt-header">RCJ DIGITAL TICKET</div>
+            <div class="receipt-team-name">{{ team.name }}</div>
+            <div class="receipt-id">ID: {{ team.id }}</div>
+            <div class="receipt-label">A号車 車検用</div>
+            <div :id="'qr-a-' + team.id" class="qr-box"></div>
+            <div class="cut-line">✂------------------</div>
           </div>
           
-          <div class="flex flex-wrap justify-center gap-8">
-            <div class="flex flex-col items-center">
-              <div class="font-black text-blue-600 bg-blue-100 px-4 py-1 rounded-full mb-3 text-lg">A号車 車検用</div>
-              <div :id="'qr-a-' + team.id"></div>
-            </div>
-            <div class="flex flex-col items-center">
-              <div class="font-black text-red-600 bg-red-100 px-4 py-1 rounded-full mb-3 text-lg">B号車 車検用</div>
-              <div :id="'qr-b-' + team.id"></div>
-            </div>
-            <div class="flex flex-col items-center border-l-2 border-slate-200 pl-8">
-              <div class="font-black text-indigo-700 bg-indigo-100 px-4 py-1 rounded-full mb-3 text-lg">📱 審判・ステータス確認</div>
-              <div :id="'qr-status-' + team.id"></div>
-            </div>
+          <div class="receipt-section">
+            <div class="receipt-header">RCJ DIGITAL TICKET</div>
+            <div class="receipt-team-name">{{ team.name }}</div>
+            <div class="receipt-id">ID: {{ team.id }}</div>
+            <div class="receipt-label">B号車 車検用</div>
+            <div :id="'qr-b-' + team.id" class="qr-box"></div>
+            <div class="cut-line">✂------------------</div>
           </div>
+          
+          <div class="receipt-section last-section">
+            <div class="receipt-header">RCJ DIGITAL TICKET</div>
+            <div class="receipt-team-name">{{ team.name }}</div>
+            <div class="receipt-id">ID: {{ team.id }}</div>
+            <div class="receipt-label">📱 ステータス確認</div>
+            <div :id="'qr-status-' + team.id" class="qr-box"></div>
+          </div>
+
         </div>
       </div>
 
@@ -113,8 +202,8 @@
           <div v-if="currentTab === 'qr'" class="max-w-xl mx-auto space-y-6">
             
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-              <h2 class="text-xl font-bold border-b pb-2 mb-4 flex items-center"><span class="mr-2">🖨️</span>受付・QRコード発行</h2>
-              <p class="text-sm text-slate-600 mb-4 font-bold">チームが受付に来るたびに1チームずつ追加・発行します。</p>
+              <h2 class="text-xl font-bold border-b pb-2 mb-4 flex items-center"><span class="mr-2">🖨️</span>受付・レシート発行</h2>
+              <p class="text-sm text-slate-600 mb-4 font-bold">1チーム追加し、A号車・B号車・確認用の3連QRを発行します。</p>
               
               <button @click="addSingleTeam" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-4 rounded-xl transition shadow-md text-lg">
                 ＋ 1チーム追加してQRを発行
@@ -366,7 +455,6 @@
         const currentTab = ref('schedule');
         const globalLoading = ref(false);
 
-        // 🌟 モード判定用
         const isRefereeMode = ref(false);
         const refereeTeamId = ref('');
 
@@ -433,26 +521,19 @@
           }
         };
 
-        // ==========================================
-        // 【修正済】審判用ステータス算出ロジック (厳格チェック)
-        // ==========================================
         const refereeTeamData = computed(() => {
           return teamsData.value.find(t => String(t.id) === String(refereeTeamId.value));
         });
 
         const isInspectionComplete = computed(() => {
           if (!refereeTeamData.value) return false;
-          
-          // 必須の5項目を明示的に指定してチェック
           const requiredKeys = ['size', 'voltage', 'kicker', 'capture', 'safety'];
           
-          // A号車のチェック
           const aOk = requiredKeys.every(k => 
             refereeTeamData.value.inspectionA && 
             refereeTeamData.value.inspectionA[k] === true
           );
           
-          // B号車のチェック
           const bOk = requiredKeys.every(k => 
             refereeTeamData.value.inspectionB && 
             refereeTeamData.value.inspectionB[k] === true
@@ -467,23 +548,21 @@
           return matches.length > 0 ? matches[0] : null;
         });
 
-        // ==========================================
-        // QR生成ロジック群
-        // ==========================================
+        // 🌟 QR生成ロジック (58mmプリンタ用に140pxで生成)
         const renderQRs = (teamsToRender) => {
           nextTick(() => {
             const baseUrl = window.location.origin + window.location.pathname;
             
             teamsToRender.forEach(team => {
               document.getElementById('qr-a-' + team.id).innerHTML = "";
-              new QRCode(document.getElementById('qr-a-' + team.id), { text: team.qrA, width: 120, height: 120 });
+              new QRCode(document.getElementById('qr-a-' + team.id), { text: team.qrA, width: 140, height: 140, colorDark: "#000000", colorLight: "#ffffff" });
               
               document.getElementById('qr-b-' + team.id).innerHTML = "";
-              new QRCode(document.getElementById('qr-b-' + team.id), { text: team.qrB, width: 120, height: 120 });
+              new QRCode(document.getElementById('qr-b-' + team.id), { text: team.qrB, width: 140, height: 140, colorDark: "#000000", colorLight: "#ffffff" });
               
               const statusUrl = baseUrl + '?team=' + team.id;
               document.getElementById('qr-status-' + team.id).innerHTML = "";
-              new QRCode(document.getElementById('qr-status-' + team.id), { text: statusUrl, width: 120, height: 120 });
+              new QRCode(document.getElementById('qr-status-' + team.id), { text: statusUrl, width: 140, height: 140, colorDark: "#000000", colorLight: "#ffffff" });
             });
           });
         };
