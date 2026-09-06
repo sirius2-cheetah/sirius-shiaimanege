@@ -7,6 +7,8 @@
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- DOMを384pxラスタ画像化するためのライブラリ -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   
   <style>
     /* ==========================================
@@ -32,6 +34,8 @@
         page-break-after: always; 
         margin: 0; 
         padding: 0;
+        background-color: #ffffff !important;
+        color: #000000 !important;
       }
       
       /* 各QRごとのブロック */
@@ -94,23 +98,83 @@
       @page { margin: 0; size: 58mm auto; }
     }
     
+    /* 画面表示時のBLEレンダリング用・プレビュー用スタイリング */
+    .receipt-ticket-render {
+      width: 384px;
+      background-color: #ffffff;
+      color: #000000;
+      padding: 10px;
+      box-sizing: border-box;
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      text-align: center;
+    }
+    .receipt-ticket-render .receipt-section {
+      padding-top: 10px;
+    }
+    .receipt-ticket-render .receipt-header {
+      font-size: 12px;
+      font-weight: bold;
+      border-bottom: 2px solid #000;
+      margin-bottom: 6px;
+      display: inline-block;
+    }
+    .receipt-ticket-render .receipt-team-name {
+      font-size: 24px;
+      font-weight: 900;
+      line-height: 1.2;
+      margin: 4px 0;
+    }
+    .receipt-ticket-render .receipt-id {
+      font-size: 14px;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+    .receipt-ticket-render .receipt-label {
+      font-size: 16px;
+      font-weight: 900;
+      border: 2px solid #000;
+      border-radius: 4px;
+      padding: 2px 10px;
+      display: inline-block;
+      margin-bottom: 6px;
+    }
+    .receipt-ticket-render .qr-box {
+      display: flex;
+      justify-content: center;
+      margin: 6px 0;
+    }
+    .receipt-ticket-render .cut-line {
+      font-size: 16px;
+      font-family: monospace;
+      color: #000;
+      margin: 12px 0;
+      white-space: nowrap;
+    }
+    
     .print-only { display: none; }
     
     /* UI用のローディング */
     .api-loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.85); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; color: #334155; }
     .spinner { border: 4px solid #cbd5e1; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 1rem; }
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+    /* BLEステータスインジケーター */
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background-color: #94a3b8; }
+    .status-dot.connected { background-color: #22c55e; box-shadow: 0 0 8px #22c55e; }
+    .status-dot.connecting { background-color: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans antialiased min-h-screen flex flex-col">
 
   <div id="app" class="flex flex-col min-h-screen">
     
+    <!-- グローバルローディング -->
     <div v-if="globalLoading" class="api-loading">
       <div class="spinner"></div>
-      <div>通信中...</div>
+      <div>{{ loadingStatusText || '通信中...' }}</div>
     </div>
 
+    <!-- 審判 / ステータス確認モード -->
     <div v-if="isRefereeMode" class="flex-grow p-4 bg-slate-100 flex flex-col max-w-md mx-auto w-full">
       <header class="bg-indigo-900 text-white shadow-md p-4 rounded-xl text-center mb-6">
         <h1 class="font-extrabold tracking-wider">チーム ステータス確認 (HW)</h1>
@@ -158,8 +222,10 @@
       </div>
     </div>
 
+    <!-- 管理者モード -->
     <template v-else>
 
+      <!-- OS標準印刷用領域 (window.print時のみ使用) -->
       <div class="print-only">
         <div v-for="team in generatedTeams" :key="team.id" class="receipt-ticket">
           
@@ -192,13 +258,21 @@
         </div>
       </div>
 
+      <!-- メインアプリUI -->
       <div class="print-hidden flex-grow flex flex-col">
         <header class="bg-gradient-to-r from-blue-800 to-indigo-900 text-white shadow-md p-4 sticky top-0 z-10 flex justify-between items-center">
           <h1 class="text-xl font-extrabold tracking-wider">RCJ マネージャー (HS)</h1>
+          
+          <!-- ヘッダー内BLE接続ステータス -->
+          <button @click="toggleBLEConnection" class="flex items-center gap-2 bg-indigo-950/60 hover:bg-indigo-950 border border-indigo-400/40 text-xs px-3 py-1.5 rounded-full transition">
+            <span class="status-dot" :class="bleStatus"></span>
+            <span class="font-bold">{{ bleDeviceName || (bleStatus === 'connected' ? 'X6 Printer' : 'BLEプリンター未接続') }}</span>
+          </button>
         </header>
 
         <main class="flex-grow p-4 overflow-y-auto pb-24">
           
+          <!-- 設定・QR発券タブ -->
           <div v-if="currentTab === 'qr'" class="max-w-xl mx-auto space-y-6">
             
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
@@ -210,18 +284,88 @@
               </button>
             </div>
 
-            <div v-if="generatedTeams.length > 0" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-              <h3 class="font-bold text-slate-700 mb-4">🖨️ 印刷メニュー</h3>
-              <div class="flex space-x-4">
-                <button @click="printQRs" class="flex-1 bg-slate-800 hover:bg-slate-900 text-white px-4 py-3 rounded-xl font-bold shadow transition">
-                  表示中のQRを印刷
+            <!-- BLEプリンター設定カード -->
+            <div class="bg-slate-900 text-white p-6 rounded-2xl shadow-md border border-slate-800">
+              <div class="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
+                <h3 class="font-bold text-slate-200 flex items-center"><span class="mr-2">📶</span>Bluetoothプリンター (X6)</h3>
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="status-dot" :class="bleStatus"></span>
+                  <span class="font-bold text-slate-300">{{ bleStatus === 'connected' ? '接続完了' : (bleStatus === 'connecting' ? '接続中...' : '未接続') }}</span>
+                </div>
+              </div>
+              
+              <p class="text-xs text-slate-400 mb-4">Web Bluetooth APIを使用してX6プリンターへ直接印字データを送ります（ドライバー不要）。</p>
+              
+              <div class="flex gap-3">
+                <button v-if="bleStatus !== 'connected'" @click="connectBLE" class="flex-1 bg-sky-500 hover:bg-sky-600 text-slate-950 font-extrabold py-3 px-4 rounded-xl transition shadow text-sm">
+                  プリンターに接続する
                 </button>
-                <button @click="showAllQRs" class="flex-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-4 py-3 rounded-xl font-bold shadow-sm transition">
-                  全チームを一括表示
+                <button v-else @click="disconnectBLE" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-3 px-4 rounded-xl transition border border-slate-700 text-sm">
+                  切断する ({{ bleDeviceName }})
                 </button>
               </div>
             </div>
 
+            <!-- 印刷メニュー -->
+            <div v-if="generatedTeams.length > 0" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <h3 class="font-bold text-slate-700 mb-4">🖨️ 印刷メニュー</h3>
+              
+              <div class="space-y-3">
+                <!-- BLEダイレクト印刷ボタン (推奨) -->
+                <button @click="printQRsBLE" class="w-full bg-sky-600 hover:bg-sky-700 text-white px-4 py-3.5 rounded-xl font-extrabold shadow transition flex items-center justify-center gap-2 text-base">
+                  <span>⚡</span> X6 (Bluetooth) でダイレクト発券
+                </button>
+                
+                <div class="flex space-x-3">
+                  <!-- ブラウザ標準印刷 (フォールバック) -->
+                  <button @click="printQRs" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 px-3 py-2.5 rounded-xl font-bold transition text-xs">
+                    🖨️ OS標準ダイログで印刷
+                  </button>
+                  <button @click="showAllQRs" class="flex-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-3 py-2.5 rounded-xl font-bold shadow-sm transition text-xs">
+                    👥 全チームを一括表示
+                  </button>
+                </div>
+              </div>
+
+              <!-- 画面上レンダリング・プレビュー領域 (BLE印字のCanvas変換用ソース) -->
+              <div class="mt-6 border-t pt-4">
+                <h4 class="text-xs font-bold text-slate-500 mb-3 text-center">【印字プレビュー】</h4>
+                <div id="ble-render-container" class="space-y-6 flex flex-col items-center overflow-x-auto p-2 bg-slate-100 rounded-xl">
+                  <div v-for="team in generatedTeams" :key="'ble-' + team.id" :id="'ticket-ble-' + team.id" class="receipt-ticket-render shadow-md rounded border border-slate-200">
+                    
+                    <div class="receipt-section">
+                      <div class="receipt-header">RCJ DIGITAL TICKET</div>
+                      <div class="receipt-team-name">{{ team.name }}</div>
+                      <div class="receipt-id">ID: {{ team.id }}</div>
+                      <div class="receipt-label">A号車 車検用</div>
+                      <div :id="'qr-ble-a-' + team.id" class="qr-box"></div>
+                      <div class="cut-line">✂------------------</div>
+                    </div>
+                    
+                    <div class="receipt-section">
+                      <div class="receipt-header">RCJ DIGITAL TICKET</div>
+                      <div class="receipt-team-name">{{ team.name }}</div>
+                      <div class="receipt-id">ID: {{ team.id }}</div>
+                      <div class="receipt-label">B号車 車検用</div>
+                      <div :id="'qr-ble-b-' + team.id" class="qr-box"></div>
+                      <div class="cut-line">✂------------------</div>
+                    </div>
+                    
+                    <div class="receipt-section last-section">
+                      <div class="receipt-header">RCJ DIGITAL TICKET</div>
+                      <div class="receipt-team-name">{{ team.name }}</div>
+                      <div class="receipt-id">ID: {{ team.id }}</div>
+                      <div class="receipt-label">📱 ステータス確認</div>
+                      <div :id="'qr-ble-status-' + team.id" class="qr-box"></div>
+                    </div>
+
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- 危険ゾーン -->
             <div class="bg-red-50 p-6 rounded-2xl border border-red-200 mt-8">
               <h2 class="text-lg font-bold text-red-700 mb-2 flex items-center"><span class="mr-2">⚠️</span>危険ゾーン</h2>
               <p class="text-xs text-red-600 mb-4 font-bold">これまでのチーム、車検、試合データがすべて完全に消去されます。</p>
@@ -231,6 +375,7 @@
             </div>
           </div>
 
+          <!-- 車検タブ -->
           <div v-if="currentTab === 'inspection'" class="max-w-md mx-auto space-y-4">
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
               <h2 class="text-xl font-bold border-b pb-2 mb-4 flex items-center justify-center"><span class="mr-2">🔍</span>車検 ＆ チーム登録</h2>
@@ -288,6 +433,7 @@
             </div>
           </div>
 
+          <!-- 対戦表タブ -->
           <div v-if="currentTab === 'schedule'" class="max-w-xl mx-auto space-y-4">
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
               <div class="flex justify-between items-center border-b pb-2 mb-4">
@@ -330,6 +476,7 @@
             </div>
           </div>
 
+          <!-- 記録タブ -->
           <div v-if="currentTab === 'score'" class="max-w-md mx-auto space-y-4">
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
               <h2 class="text-xl font-bold border-b pb-2 mb-4 flex items-center justify-center"><span class="mr-2">⚽</span>試合結果の入力</h2>
@@ -363,6 +510,7 @@
             </div>
           </div>
 
+          <!-- 順位タブ -->
           <div v-if="currentTab === 'ranking'" class="max-w-lg mx-auto space-y-4">
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
               <div class="flex justify-between items-center border-b pb-2 mb-4">
@@ -402,6 +550,7 @@
 
         </main>
 
+        <!-- ボトムナビゲーション -->
         <nav class="bg-white border-t border-slate-200 fixed bottom-0 w-full pb-safe z-50">
           <div class="flex justify-around items-center max-w-md mx-auto h-16">
             <button @click="currentTab = 'qr'" class="flex flex-col items-center w-1/5 transition" :class="currentTab === 'qr' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'">
@@ -454,6 +603,7 @@
       setup() {
         const currentTab = ref('schedule');
         const globalLoading = ref(false);
+        const loadingStatusText = ref('');
 
         const isRefereeMode = ref(false);
         const refereeTeamId = ref('');
@@ -481,6 +631,15 @@
         const scoreInput1 = ref(0);
         const scoreInput2 = ref(0);
 
+        // ==========================================
+        // 📶 Web Bluetooth (BLE) 制御用変数
+        // ==========================================
+        const bleStatus = ref(''); // '', 'connecting', 'connected'
+        const bleDeviceName = ref('');
+        let bluetoothDevice = null;
+        let writeCharacteristic = null;
+        const PRINTER_WIDTH_PX = 384; // X6 (58mm幅 203dpi) のドット幅
+
         onMounted(() => { 
           const urlParams = new URLSearchParams(window.location.search);
           const teamParam = urlParams.get('team');
@@ -498,6 +657,7 @@
 
         const fetchAllData = async () => {
           globalLoading.value = true;
+          loadingStatusText.value = '通信中...';
           try {
             const data = await fetchGAS('getAllData');
             const t = data.teams;
@@ -518,6 +678,7 @@
             alert("データの取得に失敗しました。");
           } finally {
             globalLoading.value = false;
+            loadingStatusText.value = '';
           }
         };
 
@@ -548,27 +709,40 @@
           return matches.length > 0 ? matches[0] : null;
         });
 
-        // 🌟 QR生成ロジック (58mmプリンタ用に140pxで生成)
+        // 🌟 QR生成ロジック (画面表示用およびBLEレンダリング用の両方生成)
         const renderQRs = (teamsToRender) => {
           nextTick(() => {
             const baseUrl = window.location.origin + window.location.pathname;
             
             teamsToRender.forEach(team => {
-              document.getElementById('qr-a-' + team.id).innerHTML = "";
-              new QRCode(document.getElementById('qr-a-' + team.id), { text: team.qrA, width: 140, height: 140, colorDark: "#000000", colorLight: "#ffffff" });
-              
-              document.getElementById('qr-b-' + team.id).innerHTML = "";
-              new QRCode(document.getElementById('qr-b-' + team.id), { text: team.qrB, width: 140, height: 140, colorDark: "#000000", colorLight: "#ffffff" });
-              
               const statusUrl = baseUrl + '?team=' + team.id;
-              document.getElementById('qr-status-' + team.id).innerHTML = "";
-              new QRCode(document.getElementById('qr-status-' + team.id), { text: statusUrl, width: 140, height: 140, colorDark: "#000000", colorLight: "#ffffff" });
+
+              // 1. OS標準印刷用DOMへ描画
+              const elA = document.getElementById('qr-a-' + team.id);
+              if (elA) { elA.innerHTML = ""; new QRCode(elA, { text: team.qrA, width: 140, height: 140, colorDark: "#000000", colorLight: "#ffffff" }); }
+              
+              const elB = document.getElementById('qr-b-' + team.id);
+              if (elB) { elB.innerHTML = ""; new QRCode(elB, { text: team.qrB, width: 140, height: 140, colorDark: "#000000", colorLight: "#ffffff" }); }
+              
+              const elStatus = document.getElementById('qr-status-' + team.id);
+              if (elStatus) { elStatus.innerHTML = ""; new QRCode(elStatus, { text: statusUrl, width: 140, height: 140, colorDark: "#000000", colorLight: "#ffffff" }); }
+
+              // 2. BLE印字プレビュー用DOMへ描画 (384px幅にフィットするよう180pxで鮮明化)
+              const elBleA = document.getElementById('qr-ble-a-' + team.id);
+              if (elBleA) { elBleA.innerHTML = ""; new QRCode(elBleA, { text: team.qrA, width: 180, height: 180, colorDark: "#000000", colorLight: "#ffffff" }); }
+
+              const elBleB = document.getElementById('qr-ble-b-' + team.id);
+              if (elBleB) { elBleB.innerHTML = ""; new QRCode(elBleB, { text: team.qrB, width: 180, height: 180, colorDark: "#000000", colorLight: "#ffffff" }); }
+
+              const elBleStatus = document.getElementById('qr-ble-status-' + team.id);
+              if (elBleStatus) { elBleStatus.innerHTML = ""; new QRCode(elBleStatus, { text: statusUrl, width: 180, height: 180, colorDark: "#000000", colorLight: "#ffffff" }); }
             });
           });
         };
 
         const addSingleTeam = async () => {
           globalLoading.value = true;
+          loadingStatusText.value = 'チームを追加中...';
           try {
             const newTeam = await fetchGAS('addTeamData');
             teamsData.value.push(newTeam);
@@ -579,6 +753,7 @@
              console.error(e); alert('チームの追加に失敗しました');
           } finally {
              globalLoading.value = false;
+             loadingStatusText.value = '';
           }
         };
 
@@ -589,11 +764,190 @@
 
         const printQRs = () => window.print();
 
+        // ==========================================
+        // 🖨️ BLE (X6) 接続・切断・印字ロジック
+        // ==========================================
+        const toggleBLEConnection = () => {
+          if (bleStatus.value === 'connected') {
+            disconnectBLE();
+          } else {
+            connectBLE();
+          }
+        };
+
+        const connectBLE = async () => {
+          if (!navigator.bluetooth) {
+            alert('お使いのブラウザはWeb Bluetooth APIに対応していません。ChromeまたはEdgeをご利用ください。');
+            return;
+          }
+
+          try {
+            bleStatus.value = 'connecting';
+            bleDeviceName.value = '検索中...';
+
+            bluetoothDevice = await navigator.bluetooth.requestDevice({
+              acceptAllDevices: true,
+              optionalServices: [
+                '0000af00-0000-1000-8000-00805f9b34fb',
+                '0000ae30-0000-1000-8000-00805f9b34fb',
+                '000018f0-0000-1000-8000-00805f9b34fb',
+                '49535343-fe7d-4ae5-8fa9-9fafd205e455'
+              ]
+            });
+
+            bluetoothDevice.addEventListener('gattserverdisconnected', onBLEDisconnected);
+
+            const server = await bluetoothDevice.gatt.connect();
+            const services = await server.getPrimaryServices();
+            writeCharacteristic = null;
+
+            for (const service of services) {
+              const characteristics = await service.getCharacteristics();
+              for (const char of characteristics) {
+                if (char.properties.write || char.properties.writeWithoutResponse) {
+                  writeCharacteristic = char;
+                  break;
+                }
+              }
+              if (writeCharacteristic) break;
+            }
+
+            if (!writeCharacteristic) {
+              throw new Error('書き込み可能なBLEサービスが見つかりませんでした。');
+            }
+
+            bleStatus.value = 'connected';
+            bleDeviceName.value = bluetoothDevice.name || 'X6 Printer';
+            alert(`✅ ${bleDeviceName.value} に接続しました！`);
+
+          } catch (error) {
+            console.error('BLE Connection Error:', error);
+            onBLEDisconnected();
+            if (error.name !== 'NotFoundError') {
+              alert(`接続エラー: ${error.message}`);
+            }
+          }
+        };
+
+        const disconnectBLE = () => {
+          if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+            bluetoothDevice.gatt.disconnect();
+          } else {
+            onBLEDisconnected();
+          }
+        };
+
+        const onBLEDisconnected = () => {
+          bleStatus.value = '';
+          bleDeviceName.value = '';
+          writeCharacteristic = null;
+          bluetoothDevice = null;
+        };
+
+        // CanvasのRGBAデータをESC/POSラスタビットマップ形式(GS v 0)に変換
+        const convertCanvasToRasterBitmap = (imageData) => {
+          const width = imageData.width; // 384px
+          const height = imageData.height;
+          const widthBytes = width / 8; // 48バイト
+
+          const header = new Uint8Array([
+            0x1D, 0x76, 0x30, 0x00,
+            widthBytes & 0xFF, (widthBytes >> 8) & 0xFF,
+            height & 0xFF, (height >> 8) & 0xFF
+          ]);
+
+          const imageBytes = new Uint8Array(widthBytes * height);
+
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const pixelIndex = (y * width + x) * 4;
+              const r = imageData.data[pixelIndex];
+              const g = imageData.data[pixelIndex + 1];
+              const b = imageData.data[pixelIndex + 2];
+              
+              // 輝度計算（二値化）
+              const luminance = (0.299 * r + 0.587 * g + 0.114 * b);
+              const isBlack = luminance < 160 ? 1 : 0;
+
+              if (isBlack) {
+                const byteIndex = y * widthBytes + Math.floor(x / 8);
+                const bitIndex = 7 - (x % 8);
+                imageBytes[byteIndex] |= (1 << bitIndex);
+              }
+            }
+          }
+
+          const combined = new Uint8Array(header.length + imageBytes.length);
+          combined.set(header, 0);
+          combined.set(imageBytes, header.length);
+          return combined;
+        };
+
+        // BLEダイレクト印刷メイン関数
+        const printQRsBLE = async () => {
+          if (bleStatus.value !== 'connected' || !writeCharacteristic) {
+            if (confirm("X6プリンターが接続されていません。Bluetoothプリンターに接続しますか？")) {
+              await connectBLE();
+              if (bleStatus.value !== 'connected') return;
+            } else {
+              return;
+            }
+          }
+
+          globalLoading.value = true;
+          loadingStatusText.value = 'X6に送信中...';
+
+          try {
+            for (const team of generatedTeams.value) {
+              const ticketEl = document.getElementById('ticket-ble-' + team.id);
+              if (!ticketEl) continue;
+
+              // DOMを384px幅のCanvasにレンダリング
+              const canvas = await html2canvas(ticketEl, {
+                width: PRINTER_WIDTH_PX,
+                scale: 1,
+                useCORS: true,
+                backgroundColor: '#ffffff'
+              });
+
+              const ctx = canvas.getContext('2d');
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              const bitmapBytes = convertCanvasToRasterBitmap(imageData);
+
+              // 100バイト毎に分割送信
+              const CHUNK_SIZE = 100;
+              for (let i = 0; i < bitmapBytes.length; i += CHUNK_SIZE) {
+                const chunk = bitmapBytes.slice(i, i + CHUNK_SIZE);
+                if (writeCharacteristic.properties.writeWithoutResponse) {
+                  await writeCharacteristic.writeValueWithoutResponse(chunk);
+                } else {
+                  await writeCharacteristic.writeValue(chunk);
+                }
+                await new Promise(resolve => setTimeout(resolve, 20));
+              }
+
+              // 余白の改行・紙送り (ESC d 4)
+              const feedCmd = new Uint8Array([0x1B, 0x64, 0x04]);
+              await writeCharacteristic.writeValue(feedCmd);
+            }
+
+            alert('✅ 印刷が完了しました！');
+
+          } catch (error) {
+            console.error('BLE Print Error:', error);
+            alert(`印刷中にエラーが発生しました: ${error.message}`);
+          } finally {
+            globalLoading.value = false;
+            loadingStatusText.value = '';
+          }
+        };
+
         const clearTournament = async () => {
           if (!confirm("⚠️ 本当に全てのチームと試合データを消去しますか？")) return;
           if (!confirm("⚠️ 復元できません。本当によろしいですか？")) return;
           
           globalLoading.value = true;
+          loadingStatusText.value = 'データ初期化中...';
           try {
             await fetchGAS('clearAllData');
             teamsData.value = [];
@@ -605,28 +959,31 @@
              console.error(e); alert('初期化に失敗しました');
           } finally {
              globalLoading.value = false;
+             loadingStatusText.value = '';
           }
         };
 
         const updateTeamName = async () => {
           if (!scannedTeamData.value || !scannedTeamData.value.name.trim()) return;
           globalLoading.value = true;
+          loadingStatusText.value = '保存中...';
           try {
             await fetchGAS('updateTeamNameData', { id: scannedTeamData.value.id, newName: scannedTeamData.value.name.trim() });
             alert('✅ 保存しました！');
             await fetchAllData();
           } catch (e) { console.error(e); alert('エラー'); }
-          finally { globalLoading.value = false; }
+          finally { globalLoading.value = false; loadingStatusText.value = ''; }
         };
 
         const toggleInspection = async (key, checked) => {
           if (!scannedTeamData.value) return;
           globalLoading.value = true;
+          loadingStatusText.value = '更新中...';
           try {
             await fetchGAS('updateInspectionData', { id: scannedTeamData.value.id, carType: scannedCarType.value, key, value: checked });
             scannedTeamData.value[`inspection${scannedCarType.value}`][key] = checked;
           } catch (e) { console.error(e); alert('エラー'); }
-          finally { globalLoading.value = false; }
+          finally { globalLoading.value = false; loadingStatusText.value = ''; }
         };
 
         const fetchMatchesFromServer = async () => {
@@ -636,13 +993,14 @@
         const generateSchedule = async () => {
           if (!confirm('現在の対戦結果がリセットされます。生成しますか？')) return;
           globalLoading.value = true;
+          loadingStatusText.value = '対戦表を自動作成中...';
           try {
             if (teamsData.value.length < 2) await fetchAllData();
             await fetchGAS('generateScheduleData', { teams: teamsData.value });
             await fetchAllData();
             alert('対戦表を生成しました！');
           } catch (e) { console.error(e); alert('エラー'); }
-          finally { globalLoading.value = false; }
+          finally { globalLoading.value = false; loadingStatusText.value = ''; }
         };
 
         const goToScore = (id) => {
@@ -663,6 +1021,7 @@
         const saveMatchScore = async () => {
           if (!targetMatchData.value) return;
           globalLoading.value = true;
+          loadingStatusText.value = '結果を保存中...';
           try {
             await fetchGAS('saveMatchScoreData', { matchId: targetMatchData.value.id, score1: parseInt(scoreInput1.value), score2: parseInt(scoreInput2.value) });
             alert('✅ スプレッドシートに結果を保存しました！');
@@ -671,7 +1030,7 @@
             targetMatchData.value = null;
             currentTab.value = 'schedule';
           } catch (e) { console.error(e); alert('エラーが発生しました。'); }
-          finally { globalLoading.value = false; }
+          finally { globalLoading.value = false; loadingStatusText.value = ''; }
         };
 
         const fetchRankingFromServer = async () => {
@@ -741,6 +1100,7 @@
           if (!file) return;
 
           globalLoading.value = true;
+          loadingStatusText.value = 'QR画像を解析中...';
           try {
             if (!html5QrCode) html5QrCode = new Html5Qrcode("reader-inspection");
             const text = await html5QrCode.scanFile(file, true);
@@ -750,14 +1110,16 @@
             alert('QRコードを読み取れませんでした。はっきりと写っている画像を選んでください。');
           } finally {
             globalLoading.value = false;
+            loadingStatusText.value = '';
             event.target.value = '';
           }
         };
 
         return {
-          currentTab, globalLoading,
+          currentTab, globalLoading, loadingStatusText,
           isRefereeMode, refereeTeamId, refereeTeamData, isInspectionComplete, nextMatch, fetchAllData,
           generatedTeams, addSingleTeam, showAllQRs, printQRs, clearTournament,
+          bleStatus, bleDeviceName, connectBLE, disconnectBLE, toggleBLEConnection, printQRsBLE,
           isScanning, startScanner, stopScanner, resetScan, handleFileUpload,
           scannedTeamData, scannedCarType, inspectionItems, getInspectionStatus, toggleInspection, updateTeamName,
           matchesList, fetchMatchesFromServer, generateSchedule, goToScore,
