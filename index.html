@@ -287,14 +287,14 @@
             <!-- BLEプリンター設定カード -->
             <div class="bg-slate-900 text-white p-6 rounded-2xl shadow-md border border-slate-800">
               <div class="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
-                <h3 class="font-bold text-slate-200 flex items-center"><span class="mr-2">📶</span>Bluetoothプリンター (X6)</h3>
+                <h3 class="font-bold text-slate-200 flex items-center"><span class="mr-2">📶</span>Bluetoothプリンター (X6 / ToPrint)</h3>
                 <div class="flex items-center gap-2 text-xs">
                   <span class="status-dot" :class="bleStatus"></span>
                   <span class="font-bold text-slate-300">{{ bleStatus === 'connected' ? '接続完了' : (bleStatus === 'connecting' ? '接続中...' : '未接続') }}</span>
                 </div>
               </div>
               
-              <p class="text-xs text-slate-400 mb-4">Web Bluetooth APIを使用してX6プリンターへ直接印字データを送ります（ドライバー不要）。</p>
+              <p class="text-xs text-slate-400 mb-4">Web Bluetooth APIを使用してX6プリンターへ直接印字データを送ります（ToPrint形式対応）。</p>
               
               <div class="flex gap-3">
                 <button v-if="bleStatus !== 'connected'" @click="connectBLE" class="flex-1 bg-sky-500 hover:bg-sky-600 text-slate-950 font-extrabold py-3 px-4 rounded-xl transition shadow text-sm">
@@ -765,7 +765,7 @@
         const printQRs = () => window.print();
 
         // ==========================================
-        // 🖨️ BLE (X6) 接続・切断・印字ロジック
+        // 🖨️ BLE (X6 / ToPrint) 接続・切断・印字ロジック
         // ==========================================
         const toggleBLEConnection = () => {
           if (bleStatus.value === 'connected') {
@@ -844,27 +844,46 @@
           bluetoothDevice = null;
         };
 
-        // Canvas画像を最適化された速度でスムーズに分割送信する関数
-        const printCanvasInSlicesBLE = async (canvas, characteristic) => {
+        // BLEパケット分割送信ヘルパー関数
+        const sendBLEPacket = async (characteristic, buffer) => {
+          const CHUNK_SIZE = 64;
+          for (let i = 0; i < buffer.length; i += CHUNK_SIZE) {
+            const chunk = buffer.slice(i, i + CHUNK_SIZE);
+            if (characteristic.properties.writeWithoutResponse) {
+              await characteristic.writeValueWithoutResponse(chunk);
+              await new Promise(resolve => setTimeout(resolve, 4));
+            } else {
+              await characteristic.writeValue(chunk);
+            }
+          }
+        };
+
+        // ToPrint（0xBF 0x09）形式でラスタビットマップを印字する関数
+        const printCanvasInToPrintBLE = async (canvas, characteristic) => {
           const width = canvas.width; // 384px
           const height = canvas.height;
           const widthBytes = width / 8; // 48バイト
-          const sliceHeight = 32; // スライス高さを32pxに調整（通信回数を削減）
+          const sliceHeight = 8; // ToPrint形式での最適行スライス単位 (8行 = 384バイト)
 
           const ctx = canvas.getContext('2d');
 
+          // 1. ToPrint 初期化コマンド (0xBF 0x09 0x61 0x01 ...)
+          const initCmd = new Uint8Array([0xBF, 0x09, 0x61, 0x01, 0x00, 0x00]);
+          await sendBLEPacket(characteristic, initCmd);
+
+          // 2. ラスタビットマップデータをスライス毎に送信
           for (let y = 0; y < height; y += sliceHeight) {
             const currentSliceHeight = Math.min(sliceHeight, height - y);
             const imageData = ctx.getImageData(0, y, width, currentSliceHeight);
+            const payloadSize = widthBytes * currentSliceHeight;
 
-            // GS v 0 コマンドヘッダー作成
+            // ToPrint パケットヘッダー: 0xBF 0x09 0x6E [LenL] [LenH]
             const header = new Uint8Array([
-              0x1D, 0x76, 0x30, 0x00,
-              widthBytes & 0xFF, (widthBytes >> 8) & 0xFF,
-              currentSliceHeight & 0xFF, (currentSliceHeight >> 8) & 0xFF
+              0xBF, 0x09, 0x6E,
+              payloadSize & 0xFF, (payloadSize >> 8) & 0xFF
             ]);
 
-            const imageBytes = new Uint8Array(widthBytes * currentSliceHeight);
+            const imageBytes = new Uint8Array(payloadSize);
 
             for (let sy = 0; sy < currentSliceHeight; sy++) {
               for (let x = 0; x < width; x++) {
@@ -883,27 +902,17 @@
               }
             }
 
-            // ヘッダーとビットマップデータの結合
-            const sliceBuffer = new Uint8Array(header.length + imageBytes.length);
-            sliceBuffer.set(header, 0);
-            sliceBuffer.set(imageBytes, header.length);
+            const packet = new Uint8Array(header.length + imageBytes.length);
+            packet.set(header, 0);
+            packet.set(imageBytes, header.length);
 
-            // BLEパケット分割送信 (64バイト単位)
-            const CHUNK_SIZE = 64;
-            for (let i = 0; i < sliceBuffer.length; i += CHUNK_SIZE) {
-              const chunk = sliceBuffer.slice(i, i + CHUNK_SIZE);
-              
-              if (characteristic.properties.writeWithoutResponse) {
-                await characteristic.writeValueWithoutResponse(chunk);
-                await new Promise(resolve => setTimeout(resolve, 5));
-              } else if (characteristic.properties.write) {
-                await characteristic.writeValue(chunk);
-              }
-            }
-
-            // スライスごとの物理印字ディレイ（25msに短縮し連続印字をスムーズ化）
-            await new Promise(resolve => setTimeout(resolve, 25));
+            await sendBLEPacket(characteristic, packet);
+            await new Promise(resolve => setTimeout(resolve, 10));
           }
+
+          // 3. ToPrint 紙送り・印字終了コマンド (0xBF 0x09 0x7E ...)
+          const feedCmd = new Uint8Array([0xBF, 0x09, 0x7E, 0x02, 0x00, 0x30, 0x00]);
+          await sendBLEPacket(characteristic, feedCmd);
         };
 
         // BLEダイレクト印刷メイン関数
@@ -936,16 +945,8 @@
                 backgroundColor: '#ffffff'
               });
 
-              // スムーズな分割送信処理を実行
-              await printCanvasInSlicesBLE(canvas, writeCharacteristic);
-
-              // 印刷後の余白・紙送り (ESC d 4)
-              const feedCmd = new Uint8Array([0x1B, 0x64, 0x04]);
-              if (writeCharacteristic.properties.writeWithoutResponse) {
-                await writeCharacteristic.writeValueWithoutResponse(feedCmd);
-              } else {
-                await writeCharacteristic.writeValue(feedCmd);
-              }
+              // ToPrint方式でのスムーズ印刷処理を実行
+              await printCanvasInToPrintBLE(canvas, writeCharacteristic);
               await new Promise(resolve => setTimeout(resolve, 100));
             }
 
