@@ -178,7 +178,7 @@
     <div v-if="isRefereeMode" class="flex-grow p-4 bg-slate-100 flex flex-col max-w-md mx-auto w-full">
       <header class="bg-indigo-900 text-white shadow-md p-4 rounded-xl text-center mb-6 flex justify-between items-center">
         <h1 class="font-extrabold tracking-wider">チーム ステータス確認 (HW)</h1>
-        <span class="text-[10px] bg-indigo-950 px-2 py-0.5 rounded-full font-mono text-indigo-300 border border-indigo-700">v1.4.0</span>
+        <span class="text-[10px] bg-indigo-950 px-2 py-0.5 rounded-full font-mono text-indigo-300 border border-indigo-700">v1.5.0</span>
       </header>
 
       <div v-if="refereeTeamData" class="bg-white p-6 rounded-2xl shadow-md border border-slate-200">
@@ -265,7 +265,7 @@
           <div class="flex items-center gap-2">
             <h1 class="text-xl font-extrabold tracking-wider">RCJ マネージャー (HS)</h1>
             <!-- 🌟 バージョン情報バッジ -->
-            <span class="text-[10px] bg-indigo-950/80 px-2 py-0.5 rounded-full font-mono text-indigo-200 border border-indigo-500/40">v1.4.0</span>
+            <span class="text-[10px] bg-indigo-950/80 px-2 py-0.5 rounded-full font-mono text-indigo-200 border border-indigo-500/40">v1.5.0</span>
           </div>
           
           <!-- ヘッダー内BLE接続ステータス -->
@@ -651,6 +651,8 @@
           '0000af00-0000-1000-8000-00805f9b34fb',
           '0000ae30-0000-1000-8000-00805f9b34fb',
           '000018f0-0000-1000-8000-00805f9b34fb',
+          '0000ff00-0000-1000-8000-00805f9b34fb',
+          '0000e0ff-0000-1000-8000-00805f9b34fb',
           '49535343-fe7d-4ae5-8fa9-9fafd205e455'
         ];
 
@@ -789,19 +791,50 @@
           }
         };
 
-        // 一括取得による安定型 Characteristic 取得ヘルパー
-        const discoverWriteCharacteristic = async (server) => {
-          const services = await server.getPrimaryServices();
-          for (const service of services) {
+        // 🌟 自動リトライ機能付き GATT接続 ＆ Characteristic取得ロジック (v1.5.0)
+        const connectAndGetCharacteristic = async (device) => {
+          const MAX_ATTEMPTS = 3;
+          
+          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
-              const characteristics = await service.getCharacteristics();
-              for (const char of characteristics) {
-                if (char.properties.write || char.properties.writeWithoutResponse) {
-                  return char;
+              console.log(`GATT接続試行 (${attempt}/${MAX_ATTEMPTS})...`);
+              
+              if (!device.gatt.connected) {
+                await device.gatt.connect();
+                // WindowsのGATTバッファ・セキュリティ同期用ウェイト (1.5秒)
+                await new Promise(r => setTimeout(r, 1500));
+              }
+
+              if (!device.gatt.connected) {
+                throw new Error('接続直後にGATTが切断されました');
+              }
+
+              // サービス一括取得
+              const services = await device.gatt.getPrimaryServices();
+              for (const service of services) {
+                try {
+                  const characteristics = await service.getCharacteristics();
+                  for (const char of characteristics) {
+                    if (char.properties.write || char.properties.writeWithoutResponse) {
+                      return char; // 発見したら即返却
+                    }
+                  }
+                } catch (e) {
+                  console.warn('Characteristic取得スキップ:', e);
                 }
               }
-            } catch (e) {
-              console.warn('Characteristic acquisition warning:', e);
+              
+              throw new Error('書き込み可能なCharacteristicが見つかりませんでした');
+            } catch (err) {
+              console.warn(`試行 ${attempt} 失敗:`, err.message);
+              if (device && device.gatt && device.gatt.connected) {
+                try { device.gatt.disconnect(); } catch (e) {}
+              }
+              if (attempt === MAX_ATTEMPTS) {
+                throw err;
+              }
+              // 再試行前のバックオフインターバル (1秒)
+              await new Promise(r => setTimeout(r, 1000));
             }
           }
           return null;
@@ -827,10 +860,8 @@
 
             bluetoothDevice.addEventListener('gattserverdisconnected', onBLEDisconnected);
 
-            const server = await bluetoothDevice.gatt.connect();
-            await new Promise(resolve => setTimeout(resolve, 300));
-
-            writeCharacteristic = await discoverWriteCharacteristic(server);
+            // リトライ機能付きの安全接続を実行
+            writeCharacteristic = await connectAndGetCharacteristic(bluetoothDevice);
 
             if (!writeCharacteristic) {
               throw new Error('書き込み可能なBLEサービスが見つかりませんでした。');
@@ -844,7 +875,7 @@
             console.error('BLE Connection Error:', error);
             onBLEDisconnected();
             if (error.name !== 'NotFoundError') {
-              alert(`接続エラー: ${error.message}`);
+              alert(`接続エラー: ${error.message}\n※Windowsの「設定>Bluetooth」画面でプリンターがペアリング済みの場合、登録を削除してから再試行してください。`);
             }
           } finally {
             isConnectingBLE.value = false;
@@ -868,11 +899,7 @@
             loadingStatusText.value = 'プリンターへ再接続中...';
 
             try {
-              const server = await bluetoothDevice.gatt.connect();
-              await new Promise(resolve => setTimeout(resolve, 300));
-
-              writeCharacteristic = await discoverWriteCharacteristic(server);
-
+              writeCharacteristic = await connectAndGetCharacteristic(bluetoothDevice);
               if (!writeCharacteristic) {
                 throw new Error('再接続後に書き込み可能サービスが見つかりませんでした。');
               }
