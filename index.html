@@ -178,7 +178,7 @@
     <div v-if="isRefereeMode" class="flex-grow p-4 bg-slate-100 flex flex-col max-w-md mx-auto w-full">
       <header class="bg-indigo-900 text-white shadow-md p-4 rounded-xl text-center mb-6 flex justify-between items-center">
         <h1 class="font-extrabold tracking-wider">チーム ステータス確認 (HW)</h1>
-        <span class="text-[10px] bg-indigo-950 px-2 py-0.5 rounded-full font-mono text-indigo-300 border border-indigo-700">v1.3.0</span>
+        <span class="text-[10px] bg-indigo-950 px-2 py-0.5 rounded-full font-mono text-indigo-300 border border-indigo-700">v1.4.0</span>
       </header>
 
       <div v-if="refereeTeamData" class="bg-white p-6 rounded-2xl shadow-md border border-slate-200">
@@ -265,7 +265,7 @@
           <div class="flex items-center gap-2">
             <h1 class="text-xl font-extrabold tracking-wider">RCJ マネージャー (HS)</h1>
             <!-- 🌟 バージョン情報バッジ -->
-            <span class="text-[10px] bg-indigo-950/80 px-2 py-0.5 rounded-full font-mono text-indigo-200 border border-indigo-500/40">v1.3.0</span>
+            <span class="text-[10px] bg-indigo-950/80 px-2 py-0.5 rounded-full font-mono text-indigo-200 border border-indigo-500/40">v1.4.0</span>
           </div>
           
           <!-- ヘッダー内BLE接続ステータス -->
@@ -899,28 +899,28 @@
           isConnectingBLE.value = false;
         };
 
-        // BLEパケット分割送信ヘルパー関数
+        // BLEパケット分割送信ヘルパー関数 (超安全型: 20バイト刻み & 15msスリープ)
         const sendBLEPacket = async (characteristic, buffer) => {
           await ensureBLEConnected();
 
-          const CHUNK_SIZE = 64;
+          const CHUNK_SIZE = 20; // BLE標準MTUに絞ってバッファ溢れを物理防止
           for (let i = 0; i < buffer.length; i += CHUNK_SIZE) {
             const chunk = buffer.slice(i, i + CHUNK_SIZE);
             if (writeCharacteristic.properties.writeWithoutResponse) {
               await writeCharacteristic.writeValueWithoutResponse(chunk);
-              await new Promise(resolve => setTimeout(resolve, 4));
+              await new Promise(resolve => setTimeout(resolve, 15)); // 15msで低速かつ安定送信
             } else {
               await writeCharacteristic.writeValue(chunk);
             }
           }
         };
 
-        // ToPrint（0xBF 0x09）形式でラスタビットマップを印字する関数
+        // ToPrint（0xBF 0x09）形式でラスタビットマップを印字する関数 (2行刻み)
         const printCanvasInToPrintBLE = async (canvas, characteristic) => {
           const width = canvas.width; // 384px
           const height = canvas.height;
           const widthBytes = width / 8; // 48バイト
-          const sliceHeight = 8; // ToPrint形式での最適行スライス単位 (8行 = 384バイト)
+          const sliceHeight = 2; // 2行 (96バイト) 単位で細かくリクエストを発行
 
           const ctx = canvas.getContext('2d');
 
@@ -964,7 +964,7 @@
             packet.set(imageBytes, header.length);
 
             await sendBLEPacket(characteristic, packet);
-            await new Promise(resolve => setTimeout(resolve, 10));
+            await new Promise(resolve => setTimeout(resolve, 30)); // 各スライス間に30msのインターバル
           }
 
           // 3. ToPrint 紙送り・印字終了コマンド (0xBF 0x09 0x7E ...)
