@@ -798,6 +798,15 @@
             bluetoothDevice.addEventListener('gattserverdisconnected', onBLEDisconnected);
 
             const server = await bluetoothDevice.gatt.connect();
+            // 🌟 接続直後にX6側のGATTハンドシェイク完了を待機 (500ms)
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // 万が一ハンドシェイク中に切断されていた場合、1回だけリトライ
+            if (!bluetoothDevice.gatt.connected) {
+              await bluetoothDevice.gatt.connect();
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+
             const services = await server.getPrimaryServices();
             writeCharacteristic = null;
 
@@ -829,6 +838,41 @@
           }
         };
 
+        // 🌟 接続維持ガード関数（切断検知時のバックグラウンド再接続）
+        const ensureBLEConnected = async () => {
+          if (!bluetoothDevice) {
+            throw new Error('プリンターが選択されていません。再接続してください。');
+          }
+
+          if (!bluetoothDevice.gatt.connected) {
+            console.log('GATT切断を検知。自動再接続を試みます...');
+            bleStatus.value = 'connecting';
+            loadingStatusText.value = 'プリンターへ再接続中...';
+
+            const server = await bluetoothDevice.gatt.connect();
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            const services = await server.getPrimaryServices();
+            writeCharacteristic = null;
+
+            for (const service of services) {
+              const characteristics = await service.getCharacteristics();
+              for (const char of characteristics) {
+                if (char.properties.write || char.properties.writeWithoutResponse) {
+                  writeCharacteristic = char;
+                  break;
+                }
+              }
+              if (writeCharacteristic) break;
+            }
+
+            if (!writeCharacteristic) {
+              throw new Error('再接続後に書き込み可能サービスが見つかりませんでした。');
+            }
+            bleStatus.value = 'connected';
+          }
+        };
+
         const disconnectBLE = () => {
           if (bluetoothDevice && bluetoothDevice.gatt.connected) {
             bluetoothDevice.gatt.disconnect();
@@ -846,14 +890,17 @@
 
         // BLEパケット分割送信ヘルパー関数
         const sendBLEPacket = async (characteristic, buffer) => {
+          // パケット送信前に接続維持チェック
+          await ensureBLEConnected();
+
           const CHUNK_SIZE = 64;
           for (let i = 0; i < buffer.length; i += CHUNK_SIZE) {
             const chunk = buffer.slice(i, i + CHUNK_SIZE);
-            if (characteristic.properties.writeWithoutResponse) {
-              await characteristic.writeValueWithoutResponse(chunk);
+            if (writeCharacteristic.properties.writeWithoutResponse) {
+              await writeCharacteristic.writeValueWithoutResponse(chunk);
               await new Promise(resolve => setTimeout(resolve, 4));
             } else {
-              await characteristic.writeValue(chunk);
+              await writeCharacteristic.writeValue(chunk);
             }
           }
         };
@@ -917,7 +964,7 @@
 
         // BLEダイレクト印刷メイン関数
         const printQRsBLE = async () => {
-          if (bleStatus.value !== 'connected' || !writeCharacteristic) {
+          if (!bluetoothDevice) {
             if (confirm("X6プリンターが接続されていません。Bluetoothプリンターに接続しますか？")) {
               await connectBLE();
               if (bleStatus.value !== 'connected') return;
@@ -930,6 +977,9 @@
           loadingStatusText.value = 'X6に送信中...';
 
           try {
+            // 印刷処理開始前に接続チェック＆自動再接続
+            await ensureBLEConnected();
+
             for (const team of generatedTeams.value) {
               const ticketEl = document.getElementById('ticket-ble-' + team.id);
               if (!ticketEl) continue;
@@ -955,6 +1005,7 @@
           } catch (error) {
             console.error('BLE Print Error:', error);
             alert(`印刷中にエラーが発生しました: ${error.message}`);
+            onBLEDisconnected();
           } finally {
             globalLoading.value = false;
             loadingStatusText.value = '';
@@ -1126,7 +1177,7 @@
             processQrText(text);
           } catch (err) {
             console.error(err);
-            alert('QRコードを読み取れませんでした。はっきりと写っている画像を選んでください。');
+            alert('QRコードを読み取れないか、無効なフォーマットです。');
           } finally {
             globalLoading.value = false;
             loadingStatusText.value = '';
