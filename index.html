@@ -844,12 +844,12 @@
           bluetoothDevice = null;
         };
 
-        // Canvas画像を極小単位（16px / 20バイト）で超安全に分割送信する関数
+        // Canvas画像を最適化された速度でスムーズに分割送信する関数
         const printCanvasInSlicesBLE = async (canvas, characteristic) => {
           const width = canvas.width; // 384px
           const height = canvas.height;
           const widthBytes = width / 8; // 48バイト
-          const sliceHeight = 16; // バッファオーバーロード防止のため16ピクセルに細分化
+          const sliceHeight = 32; // スライス高さを32pxに調整（通信回数を削減）
 
           const ctx = canvas.getContext('2d');
 
@@ -888,22 +888,21 @@
             sliceBuffer.set(header, 0);
             sliceBuffer.set(imageBytes, header.length);
 
-            // BLEパケット分割送信 (20バイト単位: 標準MTU安全値)
-            const CHUNK_SIZE = 20;
+            // BLEパケット分割送信 (64バイト単位)
+            const CHUNK_SIZE = 64;
             for (let i = 0; i < sliceBuffer.length; i += CHUNK_SIZE) {
               const chunk = sliceBuffer.slice(i, i + CHUNK_SIZE);
               
-              if (characteristic.properties.write) {
-                // 応答付き送信を優先してプリンターの処理完了を確実にする
-                await characteristic.writeValue(chunk);
-              } else if (characteristic.properties.writeWithoutResponse) {
+              if (characteristic.properties.writeWithoutResponse) {
                 await characteristic.writeValueWithoutResponse(chunk);
-                await new Promise(resolve => setTimeout(resolve, 20));
+                await new Promise(resolve => setTimeout(resolve, 5));
+              } else if (characteristic.properties.write) {
+                await characteristic.writeValue(chunk);
               }
             }
 
-            // スライスごとの物理印字・紙送り待ちディレイ（80ms）
-            await new Promise(resolve => setTimeout(resolve, 80));
+            // スライスごとの物理印字ディレイ（25msに短縮し連続印字をスムーズ化）
+            await new Promise(resolve => setTimeout(resolve, 25));
           }
         };
 
@@ -927,7 +926,7 @@
               if (!ticketEl) continue;
 
               // QR描画完了を待つ
-              await new Promise(resolve => setTimeout(resolve, 200));
+              await new Promise(resolve => setTimeout(resolve, 150));
 
               // DOMを384px幅のCanvasにレンダリング
               const canvas = await html2canvas(ticketEl, {
@@ -937,17 +936,17 @@
                 backgroundColor: '#ffffff'
               });
 
-              // 低負荷分割送信処理を実行
+              // スムーズな分割送信処理を実行
               await printCanvasInSlicesBLE(canvas, writeCharacteristic);
 
               // 印刷後の余白・紙送り (ESC d 4)
               const feedCmd = new Uint8Array([0x1B, 0x64, 0x04]);
-              if (writeCharacteristic.properties.write) {
-                await writeCharacteristic.writeValue(feedCmd);
-              } else {
+              if (writeCharacteristic.properties.writeWithoutResponse) {
                 await writeCharacteristic.writeValueWithoutResponse(feedCmd);
+              } else {
+                await writeCharacteristic.writeValue(feedCmd);
               }
-              await new Promise(resolve => setTimeout(resolve, 150));
+              await new Promise(resolve => setTimeout(resolve, 100));
             }
 
             alert('✅ 印刷が完了しました！');
