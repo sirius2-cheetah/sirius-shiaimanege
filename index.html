@@ -844,43 +844,66 @@
           bluetoothDevice = null;
         };
 
-        // CanvasのRGBAデータをESC/POSラスタビットマップ形式(GS v 0)に変換
-        const convertCanvasToRasterBitmap = (imageData) => {
-          const width = imageData.width; // 384px
-          const height = imageData.height;
+        // Canvas画像を小分け（48px単位）にして印刷する関数（バッファ溢れ防止）
+        const printCanvasInSlicesBLE = async (canvas, characteristic) => {
+          const width = canvas.width; // 384px
+          const height = canvas.height;
           const widthBytes = width / 8; // 48バイト
+          const sliceHeight = 48; // バッファ溢れを防ぐため48ピクセルごとに分割
 
-          const header = new Uint8Array([
-            0x1D, 0x76, 0x30, 0x00,
-            widthBytes & 0xFF, (widthBytes >> 8) & 0xFF,
-            height & 0xFF, (height >> 8) & 0xFF
-          ]);
+          const ctx = canvas.getContext('2d');
 
-          const imageBytes = new Uint8Array(widthBytes * height);
+          for (let y = 0; y < height; y += sliceHeight) {
+            const currentSliceHeight = Math.min(sliceHeight, height - y);
+            const imageData = ctx.getImageData(0, y, width, currentSliceHeight);
 
-          for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-              const pixelIndex = (y * width + x) * 4;
-              const r = imageData.data[pixelIndex];
-              const g = imageData.data[pixelIndex + 1];
-              const b = imageData.data[pixelIndex + 2];
-              
-              // 輝度計算（二値化）
-              const luminance = (0.299 * r + 0.587 * g + 0.114 * b);
-              const isBlack = luminance < 160 ? 1 : 0;
+            // GS v 0 コマンドヘッダー作成
+            const header = new Uint8Array([
+              0x1D, 0x76, 0x30, 0x00,
+              widthBytes & 0xFF, (widthBytes >> 8) & 0xFF,
+              currentSliceHeight & 0xFF, (currentSliceHeight >> 8) & 0xFF
+            ]);
 
-              if (isBlack) {
-                const byteIndex = y * widthBytes + Math.floor(x / 8);
-                const bitIndex = 7 - (x % 8);
-                imageBytes[byteIndex] |= (1 << bitIndex);
+            const imageBytes = new Uint8Array(widthBytes * currentSliceHeight);
+
+            for (let sy = 0; sy < currentSliceHeight; sy++) {
+              for (let x = 0; x < width; x++) {
+                const pixelIndex = (sy * width + x) * 4;
+                const r = imageData.data[pixelIndex];
+                const g = imageData.data[pixelIndex + 1];
+                const b = imageData.data[pixelIndex + 2];
+
+                // 輝度計算（二値化判定）
+                const luminance = (0.299 * r + 0.587 * g + 0.114 * b);
+                if (luminance < 160) {
+                  const byteIndex = sy * widthBytes + Math.floor(x / 8);
+                  const bitIndex = 7 - (x % 8);
+                  imageBytes[byteIndex] |= (1 << bitIndex);
+                }
               }
             }
-          }
 
-          const combined = new Uint8Array(header.length + imageBytes.length);
-          combined.set(header, 0);
-          combined.set(imageBytes, header.length);
-          return combined;
+            // ヘッダーとビットマップデータの結合
+            const sliceBuffer = new Uint8Array(header.length + imageBytes.length);
+            sliceBuffer.set(header, 0);
+            sliceBuffer.set(imageBytes, header.length);
+
+            // BLEパケット分割送信 (64バイト単位)
+            const CHUNK_SIZE = 64;
+            for (let i = 0; i < sliceBuffer.length; i += CHUNK_SIZE) {
+              const chunk = sliceBuffer.slice(i, i + CHUNK_SIZE);
+              if (characteristic.properties.writeWithoutResponse) {
+                await characteristic.writeValueWithoutResponse(chunk);
+              } else {
+                await characteristic.writeValue(chunk);
+              }
+              // パケット間の短いディレイ
+              await new Promise(resolve => setTimeout(resolve, 15));
+            }
+
+            // スライスごとの受信待ちディレイ
+            await new Promise(resolve => setTimeout(resolve, 40));
+          }
         };
 
         // BLEダイレクト印刷メイン関数
@@ -902,6 +925,9 @@
               const ticketEl = document.getElementById('ticket-ble-' + team.id);
               if (!ticketEl) continue;
 
+              // QR描画完了を少し待つ
+              await new Promise(resolve => setTimeout(resolve, 150));
+
               // DOMを384px幅のCanvasにレンダリング
               const canvas = await html2canvas(ticketEl, {
                 width: PRINTER_WIDTH_PX,
@@ -910,25 +936,13 @@
                 backgroundColor: '#ffffff'
               });
 
-              const ctx = canvas.getContext('2d');
-              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-              const bitmapBytes = convertCanvasToRasterBitmap(imageData);
+              // 分割送信処理を実行
+              await printCanvasInSlicesBLE(canvas, writeCharacteristic);
 
-              // 100バイト毎に分割送信
-              const CHUNK_SIZE = 100;
-              for (let i = 0; i < bitmapBytes.length; i += CHUNK_SIZE) {
-                const chunk = bitmapBytes.slice(i, i + CHUNK_SIZE);
-                if (writeCharacteristic.properties.writeWithoutResponse) {
-                  await writeCharacteristic.writeValueWithoutResponse(chunk);
-                } else {
-                  await writeCharacteristic.writeValue(chunk);
-                }
-                await new Promise(resolve => setTimeout(resolve, 20));
-              }
-
-              // 余白の改行・紙送り (ESC d 4)
+              // 印刷後の余白・紙送り (ESC d 4)
               const feedCmd = new Uint8Array([0x1B, 0x64, 0x04]);
               await writeCharacteristic.writeValue(feedCmd);
+              await new Promise(resolve => setTimeout(resolve, 100));
             }
 
             alert('✅ 印刷が完了しました！');
