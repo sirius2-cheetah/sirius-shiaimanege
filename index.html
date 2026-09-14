@@ -636,9 +636,18 @@
         // ==========================================
         const bleStatus = ref(''); // '', 'connecting', 'connected'
         const bleDeviceName = ref('');
+        const isConnectingBLE = ref(false); // 排他制御フラグ
         let bluetoothDevice = null;
         let writeCharacteristic = null;
         const PRINTER_WIDTH_PX = 384; // X6 (58mm幅 203dpi) のドット幅
+
+        // X6/ToPrint プリンターで頻出するサービスUUID候補
+        const CANDIDATE_SERVICE_UUIDS = [
+          '0000af00-0000-1000-8000-00805f9b34fb',
+          '0000ae30-0000-1000-8000-00805f9b34fb',
+          '000018f0-0000-1000-8000-00805f9b34fb',
+          '49535343-fe7d-4ae5-8fa9-9fafd205e455'
+        ];
 
         onMounted(() => { 
           const urlParams = new URLSearchParams(window.location.search);
@@ -775,51 +784,61 @@
           }
         };
 
+        // 高速に書き込み用Characteristicを取得する内部ヘルパー
+        const discoverWriteCharacteristic = async (server) => {
+          writeCharacteristic = null;
+          // 1. ピンポイントで主要サービス候補を検索 (高速化: 約1秒で完了)
+          for (const uuid of CANDIDATE_SERVICE_UUIDS) {
+            try {
+              const service = await server.getPrimaryService(uuid);
+              const characteristics = await service.getCharacteristics();
+              for (const char of characteristics) {
+                if (char.properties.write || char.properties.writeWithoutResponse) {
+                  return char;
+                }
+              }
+            } catch (e) {
+              // 対象のUUIDが無ければ次へ
+            }
+          }
+
+          // 2. 候補に無かった場合のフォールバック（全検索）
+          const services = await server.getPrimaryServices();
+          for (const service of services) {
+            const characteristics = await service.getCharacteristics();
+            for (const char of characteristics) {
+              if (char.properties.write || char.properties.writeWithoutResponse) {
+                return char;
+              }
+            }
+          }
+          return null;
+        };
+
         const connectBLE = async () => {
           if (!navigator.bluetooth) {
             alert('お使いのブラウザはWeb Bluetooth APIに対応していません。ChromeまたはEdgeをご利用ください。');
             return;
           }
 
+          if (isConnectingBLE.value) return;
+
           try {
+            isConnectingBLE.value = true;
             bleStatus.value = 'connecting';
             bleDeviceName.value = '検索中...';
 
             bluetoothDevice = await navigator.bluetooth.requestDevice({
               acceptAllDevices: true,
-              optionalServices: [
-                '0000af00-0000-1000-8000-00805f9b34fb',
-                '0000ae30-0000-1000-8000-00805f9b34fb',
-                '000018f0-0000-1000-8000-00805f9b34fb',
-                '49535343-fe7d-4ae5-8fa9-9fafd205e455'
-              ]
+              optionalServices: CANDIDATE_SERVICE_UUIDS
             });
 
             bluetoothDevice.addEventListener('gattserverdisconnected', onBLEDisconnected);
 
             const server = await bluetoothDevice.gatt.connect();
-            // 🌟 接続直後にX6側のGATTハンドシェイク完了を待機 (500ms)
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 300));
 
-            // 万が一ハンドシェイク中に切断されていた場合、1回だけリトライ
-            if (!bluetoothDevice.gatt.connected) {
-              await bluetoothDevice.gatt.connect();
-              await new Promise(resolve => setTimeout(resolve, 500));
-            }
-
-            const services = await server.getPrimaryServices();
-            writeCharacteristic = null;
-
-            for (const service of services) {
-              const characteristics = await service.getCharacteristics();
-              for (const char of characteristics) {
-                if (char.properties.write || char.properties.writeWithoutResponse) {
-                  writeCharacteristic = char;
-                  break;
-                }
-              }
-              if (writeCharacteristic) break;
-            }
+            writeCharacteristic = await discoverWriteCharacteristic(server);
 
             if (!writeCharacteristic) {
               throw new Error('書き込み可能なBLEサービスが見つかりませんでした。');
@@ -835,41 +854,41 @@
             if (error.name !== 'NotFoundError') {
               alert(`接続エラー: ${error.message}`);
             }
+          } finally {
+            isConnectingBLE.value = false;
           }
         };
 
-        // 🌟 接続維持ガード関数（切断検知時のバックグラウンド再接続）
+        // 🌟 接続維持ガード関数（切断検知時や接続処理中の安全確保）
         const ensureBLEConnected = async () => {
           if (!bluetoothDevice) {
             throw new Error('プリンターが選択されていません。再接続してください。');
           }
 
-          if (!bluetoothDevice.gatt.connected) {
-            console.log('GATT切断を検知。自動再接続を試みます...');
+          // 他の接続処理が実行中の場合は完了まで待機
+          while (isConnectingBLE.value) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+
+          if (!bluetoothDevice.gatt.connected || !writeCharacteristic) {
+            console.log('GATT切断またはCharacteristic未取得を検知。自動再接続を試みます...');
             bleStatus.value = 'connecting';
+            isConnectingBLE.value = true;
             loadingStatusText.value = 'プリンターへ再接続中...';
 
-            const server = await bluetoothDevice.gatt.connect();
-            await new Promise(resolve => setTimeout(resolve, 500));
+            try {
+              const server = await bluetoothDevice.gatt.connect();
+              await new Promise(resolve => setTimeout(resolve, 300));
 
-            const services = await server.getPrimaryServices();
-            writeCharacteristic = null;
+              writeCharacteristic = await discoverWriteCharacteristic(server);
 
-            for (const service of services) {
-              const characteristics = await service.getCharacteristics();
-              for (const char of characteristics) {
-                if (char.properties.write || char.properties.writeWithoutResponse) {
-                  writeCharacteristic = char;
-                  break;
-                }
+              if (!writeCharacteristic) {
+                throw new Error('再接続後に書き込み可能サービスが見つかりませんでした。');
               }
-              if (writeCharacteristic) break;
+              bleStatus.value = 'connected';
+            } finally {
+              isConnectingBLE.value = false;
             }
-
-            if (!writeCharacteristic) {
-              throw new Error('再接続後に書き込み可能サービスが見つかりませんでした。');
-            }
-            bleStatus.value = 'connected';
           }
         };
 
@@ -886,11 +905,11 @@
           bleDeviceName.value = '';
           writeCharacteristic = null;
           bluetoothDevice = null;
+          isConnectingBLE.value = false;
         };
 
         // BLEパケット分割送信ヘルパー関数
         const sendBLEPacket = async (characteristic, buffer) => {
-          // パケット送信前に接続維持チェック
           await ensureBLEConnected();
 
           const CHUNK_SIZE = 64;
@@ -964,6 +983,11 @@
 
         // BLEダイレクト印刷メイン関数
         const printQRsBLE = async () => {
+          if (isConnectingBLE.value) {
+            alert("現在プリンターへの接続処理中です。完了するまで少しお待ちください。");
+            return;
+          }
+
           if (!bluetoothDevice) {
             if (confirm("X6プリンターが接続されていません。Bluetoothプリンターに接続しますか？")) {
               await connectBLE();
