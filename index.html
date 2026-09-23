@@ -98,7 +98,7 @@
       @page { margin: 0; size: 58mm auto; }
     }
     
-    /* 画面表示時のBLEレンダリング用・プレビュー用スタイリング */
+    /* 画面表示時のシリアル印字レンダリング用・プレビュー用スタイリング */
     .receipt-ticket-render {
       width: 384px;
       background-color: #ffffff;
@@ -158,7 +158,7 @@
     .spinner { border: 4px solid #cbd5e1; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 1rem; }
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-    /* BLEステータスインジケーター */
+    /* シリアルステータスインジケーター */
     .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background-color: #94a3b8; }
     .status-dot.connected { background-color: #22c55e; box-shadow: 0 0 8px #22c55e; }
     .status-dot.connecting { background-color: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
@@ -178,7 +178,7 @@
     <div v-if="isRefereeMode" class="flex-grow p-4 bg-slate-100 flex flex-col max-w-md mx-auto w-full">
       <header class="bg-indigo-900 text-white shadow-md p-4 rounded-xl text-center mb-6 flex justify-between items-center">
         <h1 class="font-extrabold tracking-wider">チーム ステータス確認 (HW)</h1>
-        <span class="text-[10px] bg-indigo-950 px-2 py-0.5 rounded-full font-mono text-indigo-300 border border-indigo-700">v1.5.0</span>
+        <span class="text-[10px] bg-indigo-950 px-2 py-0.5 rounded-full font-mono text-indigo-300 border border-indigo-700">v2.0.0</span>
       </header>
 
       <div v-if="refereeTeamData" class="bg-white p-6 rounded-2xl shadow-md border border-slate-200">
@@ -265,13 +265,13 @@
           <div class="flex items-center gap-2">
             <h1 class="text-xl font-extrabold tracking-wider">RCJ マネージャー (HS)</h1>
             <!-- 🌟 バージョン情報バッジ -->
-            <span class="text-[10px] bg-indigo-950/80 px-2 py-0.5 rounded-full font-mono text-indigo-200 border border-indigo-500/40">v1.5.0</span>
+            <span class="text-[10px] bg-indigo-950/80 px-2 py-0.5 rounded-full font-mono text-indigo-200 border border-indigo-500/40">v2.0.0</span>
           </div>
           
-          <!-- ヘッダー内BLE接続ステータス -->
-          <button @click="toggleBLEConnection" class="flex items-center gap-2 bg-indigo-950/60 hover:bg-indigo-950 border border-indigo-400/40 text-xs px-3 py-1.5 rounded-full transition">
-            <span class="status-dot" :class="bleStatus"></span>
-            <span class="font-bold">{{ bleDeviceName || (bleStatus === 'connected' ? 'X6 Printer' : 'BLEプリンター未接続') }}</span>
+          <!-- ヘッダー内Serial接続ステータス -->
+          <button @click="toggleSerialConnection" class="flex items-center gap-2 bg-indigo-950/60 hover:bg-indigo-950 border border-indigo-400/40 text-xs px-3 py-1.5 rounded-full transition">
+            <span class="status-dot" :class="serialStatus"></span>
+            <span class="font-bold">{{ serialStatus === 'connected' ? 'プリンター接続中(COM)' : 'プリンター未接続' }}</span>
           </button>
         </header>
 
@@ -289,24 +289,24 @@
               </button>
             </div>
 
-            <!-- BLEプリンター設定カード -->
+            <!-- Web Serial API設定カード -->
             <div class="bg-slate-900 text-white p-6 rounded-2xl shadow-md border border-slate-800">
               <div class="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
-                <h3 class="font-bold text-slate-200 flex items-center"><span class="mr-2">📶</span>Bluetoothプリンター (X6 / ToPrint)</h3>
+                <h3 class="font-bold text-slate-200 flex items-center"><span class="mr-2">🔌</span>プリンター接続 (Web Serial / SPP COM)</h3>
                 <div class="flex items-center gap-2 text-xs">
-                  <span class="status-dot" :class="bleStatus"></span>
-                  <span class="font-bold text-slate-300">{{ bleStatus === 'connected' ? '接続完了' : (bleStatus === 'connecting' ? '接続中...' : '未接続') }}</span>
+                  <span class="status-dot" :class="serialStatus"></span>
+                  <span class="font-bold text-slate-300">{{ serialStatus === 'connected' ? '接続完了' : '未接続' }}</span>
                 </div>
               </div>
               
-              <p class="text-xs text-slate-400 mb-4">Web Bluetooth APIを使用してX6プリンターへ直接印字データを送ります（ToPrint形式対応）。</p>
+              <p class="text-xs text-slate-400 mb-4">Web Serial APIを使用して、Bluetoothペアリング済みの仮想COMポート経由で印字データを直接送信します。</p>
               
               <div class="flex gap-3">
-                <button v-if="bleStatus !== 'connected'" @click="connectBLE" class="flex-1 bg-sky-500 hover:bg-sky-600 text-slate-950 font-extrabold py-3 px-4 rounded-xl transition shadow text-sm">
-                  プリンターに接続する
+                <button v-if="serialStatus !== 'connected'" @click="connectSerial" class="flex-1 bg-sky-500 hover:bg-sky-600 text-slate-950 font-extrabold py-3 px-4 rounded-xl transition shadow text-sm">
+                  USB/BT(COM)プリンターに接続
                 </button>
-                <button v-else @click="disconnectBLE" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-3 px-4 rounded-xl transition border border-slate-700 text-sm">
-                  切断する ({{ bleDeviceName }})
+                <button v-else @click="disconnectSerial" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-3 px-4 rounded-xl transition border border-slate-700 text-sm">
+                  切断する
                 </button>
               </div>
             </div>
@@ -316,9 +316,9 @@
               <h3 class="font-bold text-slate-700 mb-4">🖨️ 印刷メニュー</h3>
               
               <div class="space-y-3">
-                <!-- BLEダイレクト印刷ボタン (推奨) -->
-                <button @click="printQRsBLE" class="w-full bg-sky-600 hover:bg-sky-700 text-white px-4 py-3.5 rounded-xl font-extrabold shadow transition flex items-center justify-center gap-2 text-base">
-                  <span>⚡</span> X6 (Bluetooth) でダイレクト発券
+                <!-- Serialダイレクト印刷ボタン (推奨) -->
+                <button @click="printQRsSerial" class="w-full bg-sky-600 hover:bg-sky-700 text-white px-4 py-3.5 rounded-xl font-extrabold shadow transition flex items-center justify-center gap-2 text-base">
+                  <span>⚡</span> X6 (Serial/COM) でダイレクト発券
                 </button>
                 
                 <div class="flex space-x-3">
@@ -332,7 +332,7 @@
                 </div>
               </div>
 
-              <!-- 画面上レンダリング・プレビュー領域 (BLE印字のCanvas変換用ソース) -->
+              <!-- 画面上レンダリング・プレビュー領域 (Serial印字のCanvas変換用ソース) -->
               <div class="mt-6 border-t pt-4">
                 <h4 class="text-xs font-bold text-slate-500 mb-3 text-center">【印字プレビュー】</h4>
                 <div id="ble-render-container" class="space-y-6 flex flex-col items-center overflow-x-auto p-2 bg-slate-100 rounded-xl">
@@ -637,24 +637,12 @@
         const scoreInput2 = ref(0);
 
         // ==========================================
-        // 📶 Web Bluetooth (BLE) 制御用変数
+        // 📶 Web Serial API (仮想COMポート / SPP) 制御用変数
         // ==========================================
-        const bleStatus = ref(''); // '', 'connecting', 'connected'
-        const bleDeviceName = ref('');
-        const isConnectingBLE = ref(false); // 排他制御フラグ
-        let bluetoothDevice = null;
-        let writeCharacteristic = null;
+        const serialStatus = ref(''); // '', 'connected'
+        let serialPort = null;
+        let serialWriter = null;
         const PRINTER_WIDTH_PX = 384; // X6 (58mm幅 203dpi) のドット幅
-
-        // X6/ToPrint プリンターで頻出するサービスUUID候補
-        const CANDIDATE_SERVICE_UUIDS = [
-          '0000af00-0000-1000-8000-00805f9b34fb',
-          '0000ae30-0000-1000-8000-00805f9b34fb',
-          '000018f0-0000-1000-8000-00805f9b34fb',
-          '0000ff00-0000-1000-8000-00805f9b34fb',
-          '0000e0ff-0000-1000-8000-00805f9b34fb',
-          '49535343-fe7d-4ae5-8fa9-9fafd205e455'
-        ];
 
         onMounted(() => { 
           const urlParams = new URLSearchParams(window.location.search);
@@ -725,7 +713,7 @@
           return matches.length > 0 ? matches[0] : null;
         });
 
-        // 🌟 QR生成ロジック (画面表示用およびBLEレンダリング用の両方生成)
+        // 🌟 QR生成ロジック (画面表示用および印字プレビュー用の両方生成)
         const renderQRs = (teamsToRender) => {
           nextTick(() => {
             const baseUrl = window.location.origin + window.location.pathname;
@@ -743,7 +731,7 @@
               const elStatus = document.getElementById('qr-status-' + team.id);
               if (elStatus) { elStatus.innerHTML = ""; new QRCode(elStatus, { text: statusUrl, width: 140, height: 140, colorDark: "#000000", colorLight: "#ffffff" }); }
 
-              // 2. BLE印字プレビュー用DOMへ描画 (384px幅にフィットするよう180pxで鮮明化)
+              // 2. 印字プレビュー用DOMへ描画
               const elBleA = document.getElementById('qr-ble-a-' + team.id);
               if (elBleA) { elBleA.innerHTML = ""; new QRCode(elBleA, { text: team.qrA, width: 180, height: 180, colorDark: "#000000", colorLight: "#ffffff" }); }
 
@@ -781,187 +769,88 @@
         const printQRs = () => window.print();
 
         // ==========================================
-        // 🖨️ BLE (X6 / ToPrint) 接続・切断・印字ロジック
+        // 🖨️ Web Serial API (仮想COMポート / SPP) 接続・切断・印字
         // ==========================================
-        const toggleBLEConnection = () => {
-          if (bleStatus.value === 'connected') {
-            disconnectBLE();
+        const toggleSerialConnection = () => {
+          if (serialStatus.value === 'connected') {
+            disconnectSerial();
           } else {
-            connectBLE();
+            connectSerial();
           }
         };
 
-        // 🌟 自動リトライ機能付き GATT接続 ＆ Characteristic取得ロジック (v1.5.0)
-        const connectAndGetCharacteristic = async (device) => {
-          const MAX_ATTEMPTS = 3;
-          
-          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-            try {
-              console.log(`GATT接続試行 (${attempt}/${MAX_ATTEMPTS})...`);
-              
-              if (!device.gatt.connected) {
-                await device.gatt.connect();
-                // WindowsのGATTバッファ・セキュリティ同期用ウェイト (1.5秒)
-                await new Promise(r => setTimeout(r, 1500));
-              }
-
-              if (!device.gatt.connected) {
-                throw new Error('接続直後にGATTが切断されました');
-              }
-
-              // サービス一括取得
-              const services = await device.gatt.getPrimaryServices();
-              for (const service of services) {
-                try {
-                  const characteristics = await service.getCharacteristics();
-                  for (const char of characteristics) {
-                    if (char.properties.write || char.properties.writeWithoutResponse) {
-                      return char; // 発見したら即返却
-                    }
-                  }
-                } catch (e) {
-                  console.warn('Characteristic取得スキップ:', e);
-                }
-              }
-              
-              throw new Error('書き込み可能なCharacteristicが見つかりませんでした');
-            } catch (err) {
-              console.warn(`試行 ${attempt} 失敗:`, err.message);
-              if (device && device.gatt && device.gatt.connected) {
-                try { device.gatt.disconnect(); } catch (e) {}
-              }
-              if (attempt === MAX_ATTEMPTS) {
-                throw err;
-              }
-              // 再試行前のバックオフインターバル (1秒)
-              await new Promise(r => setTimeout(r, 1000));
-            }
-          }
-          return null;
-        };
-
-        const connectBLE = async () => {
-          if (!navigator.bluetooth) {
-            alert('お使いのブラウザはWeb Bluetooth APIに対応していません。ChromeまたはEdgeをご利用ください。');
+        const connectSerial = async () => {
+          if (!('serial' in navigator)) {
+            alert('お使いのブラウザは Web Serial API に対応していません。Chrome または Edge をご利用ください。');
             return;
           }
 
-          if (isConnectingBLE.value) return;
-
           try {
-            isConnectingBLE.value = true;
-            bleStatus.value = 'connecting';
-            bleDeviceName.value = '検索中...';
+            // ユーザーにポート選択ダイアログを表示（ここでCOMポートを選択）
+            serialPort = await navigator.serial.requestPort();
+            
+            // ボーレートはSPP用（標準で9600または115200）でオープン
+            await serialPort.open({ baudRate: 115200 });
 
-            bluetoothDevice = await navigator.bluetooth.requestDevice({
-              acceptAllDevices: true,
-              optionalServices: CANDIDATE_SERVICE_UUIDS
-            });
-
-            bluetoothDevice.addEventListener('gattserverdisconnected', onBLEDisconnected);
-
-            // リトライ機能付きの安全接続を実行
-            writeCharacteristic = await connectAndGetCharacteristic(bluetoothDevice);
-
-            if (!writeCharacteristic) {
-              throw new Error('書き込み可能なBLEサービスが見つかりませんでした。');
-            }
-
-            bleStatus.value = 'connected';
-            bleDeviceName.value = bluetoothDevice.name || 'X6 Printer';
-            alert(`✅ ${bleDeviceName.value} に接続しました！`);
+            serialWriter = serialPort.writable.getWriter();
+            serialStatus.value = 'connected';
+            alert('✅ シリアルプリンター(COMポート)に接続しました！');
 
           } catch (error) {
-            console.error('BLE Connection Error:', error);
-            onBLEDisconnected();
+            console.error('Web Serial Error:', error);
+            disconnectSerial();
             if (error.name !== 'NotFoundError') {
-              alert(`接続エラー: ${error.message}\n※Windowsの「設定>Bluetooth」画面でプリンターがペアリング済みの場合、登録を削除してから再試行してください。`);
+              alert(`接続エラー: ${error.message}`);
             }
+          }
+        };
+
+        const disconnectSerial = async () => {
+          try {
+            if (serialWriter) {
+              serialWriter.releaseLock();
+              serialWriter = null;
+            }
+            if (serialPort) {
+              await serialPort.close();
+              serialPort = null;
+            }
+          } catch (e) {
+            console.warn(e);
           } finally {
-            isConnectingBLE.value = false;
+            serialStatus.value = '';
           }
         };
 
-        // 🌟 接続維持ガード関数
-        const ensureBLEConnected = async () => {
-          if (!bluetoothDevice) {
-            throw new Error('プリンターが選択されていません。再接続してください。');
+        // シリアルバッファデータ安全送信関数
+        const sendSerialData = async (buffer) => {
+          if (!serialWriter) {
+            throw new Error('プリンターとシリアル接続されていません。');
           }
-
-          while (isConnectingBLE.value) {
-            await new Promise(resolve => setTimeout(resolve, 200));
-          }
-
-          if (!bluetoothDevice.gatt.connected || !writeCharacteristic) {
-            console.log('GATT切断を検知。自動再接続を試みます...');
-            bleStatus.value = 'connecting';
-            isConnectingBLE.value = true;
-            loadingStatusText.value = 'プリンターへ再接続中...';
-
-            try {
-              writeCharacteristic = await connectAndGetCharacteristic(bluetoothDevice);
-              if (!writeCharacteristic) {
-                throw new Error('再接続後に書き込み可能サービスが見つかりませんでした。');
-              }
-              bleStatus.value = 'connected';
-            } finally {
-              isConnectingBLE.value = false;
-            }
-          }
+          await serialWriter.write(buffer);
+          // SPPの受信バッファ保護のためわずかにインターバル
+          await new Promise(resolve => setTimeout(resolve, 5));
         };
 
-        const disconnectBLE = () => {
-          if (bluetoothDevice && bluetoothDevice.gatt.connected) {
-            bluetoothDevice.gatt.disconnect();
-          } else {
-            onBLEDisconnected();
-          }
-        };
-
-        const onBLEDisconnected = () => {
-          bleStatus.value = '';
-          bleDeviceName.value = '';
-          writeCharacteristic = null;
-          bluetoothDevice = null;
-          isConnectingBLE.value = false;
-        };
-
-        // BLEパケット分割送信ヘルパー関数 (超安全型: 20バイト刻み & 15msスリープ)
-        const sendBLEPacket = async (characteristic, buffer) => {
-          await ensureBLEConnected();
-
-          const CHUNK_SIZE = 20; // BLE標準MTUに絞ってバッファ溢れを物理防止
-          for (let i = 0; i < buffer.length; i += CHUNK_SIZE) {
-            const chunk = buffer.slice(i, i + CHUNK_SIZE);
-            if (writeCharacteristic.properties.writeWithoutResponse) {
-              await writeCharacteristic.writeValueWithoutResponse(chunk);
-              await new Promise(resolve => setTimeout(resolve, 15)); // 15msで低速かつ安定送信
-            } else {
-              await writeCharacteristic.writeValue(chunk);
-            }
-          }
-        };
-
-        // ToPrint（0xBF 0x09）形式でラスタビットマップを印字する関数 (2行刻み)
-        const printCanvasInToPrintBLE = async (canvas, characteristic) => {
+        // ToPrint（0xBF 0x09）形式でラスタビットマップを印字（Serial版）
+        const printCanvasInToPrintSerial = async (canvas) => {
           const width = canvas.width; // 384px
           const height = canvas.height;
           const widthBytes = width / 8; // 48バイト
-          const sliceHeight = 2; // 2行 (96バイト) 単位で細かくリクエストを発行
+          const sliceHeight = 8; // SPPは高速なため8行(384B)単位で送信可能
 
           const ctx = canvas.getContext('2d');
 
-          // 1. ToPrint 初期化コマンド (0xBF 0x09 0x61 0x01 ...)
+          // 1. ToPrint 初期化コマンド
           const initCmd = new Uint8Array([0xBF, 0x09, 0x61, 0x01, 0x00, 0x00]);
-          await sendBLEPacket(characteristic, initCmd);
+          await sendSerialData(initCmd);
 
-          // 2. ラスタビットマップデータをスライス毎に送信
+          // 2. ラスタビットマップデータを送信
           for (let y = 0; y < height; y += sliceHeight) {
             const currentSliceHeight = Math.min(sliceHeight, height - y);
             const imageData = ctx.getImageData(0, y, width, currentSliceHeight);
             const payloadSize = widthBytes * currentSliceHeight;
 
-            // ToPrint パケットヘッダー: 0xBF 0x09 0x6E [LenL] [LenH]
             const header = new Uint8Array([
               0xBF, 0x09, 0x6E,
               payloadSize & 0xFF, (payloadSize >> 8) & 0xFF
@@ -976,7 +865,6 @@
                 const g = imageData.data[pixelIndex + 1];
                 const b = imageData.data[pixelIndex + 2];
 
-                // 輝度計算（二値化判定）
                 const luminance = (0.299 * r + 0.587 * g + 0.114 * b);
                 if (luminance < 160) {
                   const byteIndex = sy * widthBytes + Math.floor(x / 8);
@@ -990,37 +878,30 @@
             packet.set(header, 0);
             packet.set(imageBytes, header.length);
 
-            await sendBLEPacket(characteristic, packet);
-            await new Promise(resolve => setTimeout(resolve, 30)); // 各スライス間に30msのインターバル
+            await sendSerialData(packet);
+            await new Promise(resolve => setTimeout(resolve, 10));
           }
 
-          // 3. ToPrint 紙送り・印字終了コマンド (0xBF 0x09 0x7E ...)
+          // 3. ToPrint 紙送り・印字終了コマンド
           const feedCmd = new Uint8Array([0xBF, 0x09, 0x7E, 0x02, 0x00, 0x30, 0x00]);
-          await sendBLEPacket(characteristic, feedCmd);
+          await sendSerialData(feedCmd);
         };
 
-        // BLEダイレクト印刷メイン関数
-        const printQRsBLE = async () => {
-          if (isConnectingBLE.value) {
-            alert("現在プリンターへの接続処理中です。完了するまで少しお待ちください。");
-            return;
-          }
-
-          if (!bluetoothDevice) {
-            if (confirm("X6プリンターが接続されていません。Bluetoothプリンターに接続しますか？")) {
-              await connectBLE();
-              if (bleStatus.value !== 'connected') return;
+        // Serialダイレクト印刷メイン関数
+        const printQRsSerial = async () => {
+          if (serialStatus.value !== 'connected' || !serialWriter) {
+            if (confirm("シリアルプリンターが接続されていません。接続ダイアログを開きますか？")) {
+              await connectSerial();
+              if (serialStatus.value !== 'connected') return;
             } else {
               return;
             }
           }
 
           globalLoading.value = true;
-          loadingStatusText.value = 'X6に送信中...';
+          loadingStatusText.value = 'プリンターに送信中...';
 
           try {
-            await ensureBLEConnected();
-
             for (const team of generatedTeams.value) {
               const ticketEl = document.getElementById('ticket-ble-' + team.id);
               if (!ticketEl) continue;
@@ -1034,16 +915,16 @@
                 backgroundColor: '#ffffff'
               });
 
-              await printCanvasInToPrintBLE(canvas, writeCharacteristic);
+              await printCanvasInToPrintSerial(canvas);
               await new Promise(resolve => setTimeout(resolve, 100));
             }
 
             alert('✅ 印刷が完了しました！');
 
           } catch (error) {
-            console.error('BLE Print Error:', error);
+            console.error('Serial Print Error:', error);
             alert(`印刷中にエラーが発生しました: ${error.message}`);
-            onBLEDisconnected();
+            disconnectSerial();
           } finally {
             globalLoading.value = false;
             loadingStatusText.value = '';
@@ -1227,7 +1108,7 @@
           currentTab, globalLoading, loadingStatusText,
           isRefereeMode, refereeTeamId, refereeTeamData, isInspectionComplete, nextMatch, fetchAllData,
           generatedTeams, addSingleTeam, showAllQRs, printQRs, clearTournament,
-          bleStatus, bleDeviceName, connectBLE, disconnectBLE, toggleBLEConnection, printQRsBLE,
+          serialStatus, connectSerial, disconnectSerial, toggleSerialConnection, printQRsSerial,
           isScanning, startScanner, stopScanner, resetScan, handleFileUpload,
           scannedTeamData, scannedCarType, inspectionItems, getInspectionStatus, toggleInspection, updateTeamName,
           matchesList, fetchMatchesFromServer, generateSchedule, goToScore,
